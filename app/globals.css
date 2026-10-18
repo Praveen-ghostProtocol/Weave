@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --surface: #f4f3f0;
+  --ink: #211f1b;
+  --ink-muted: #6b6a63;
+}
+
+@theme inline {
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #1a1b17;
+    --ink: #ECEAE3;
+    --ink-muted: #9b9a8f;
+  }
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink);
+}

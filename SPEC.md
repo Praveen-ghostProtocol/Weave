@@ -20,6 +20,15 @@ backups) get built, before any real backend goes live.
 Out of scope for this spec: ChatGPT/Claude plugin (MCP bridge — phase 2),
 any social/sharing features (phase 3, only if there's traction).
 
+**Addendum — AI draft assist.** The raw export (concatenated node content)
+is the default and still works with zero setup. Additionally, a user can
+optionally supply their own Anthropic API key (stored in their browser only)
+and have Weave call Claude directly to turn the selected nodes into a
+polished, synthesized prompt instead of raw concatenation. This stays
+"no backend": the browser calls Anthropic's API directly, nothing is
+proxied or stored server-side. See the new Boundaries entries and Success
+Criteria below for the rules this must follow.
+
 ## Tech Stack
 - Next.js (App Router) + TypeScript + React — static client app, no server-side DB
 - Tailwind CSS
@@ -28,6 +37,10 @@ any social/sharing features (phase 3, only if there's traction).
   no force-directed physics — expected node count per user is small, tens not
   hundreds, so auto-layout is overkill)
 - Deployed on Vercel as a static app (no DB, no server cost)
+- AI draft assist: direct `fetch` to Anthropic's Messages API from the
+  browser (no SDK needed for one endpoint — ponytail: don't add a dependency
+  for what one `fetch` call does). User's API key stored in `localStorage`
+  only, read at call time, never bundled/committed/logged.
 - **Deferred to v1** (only after the core loop is validated): Postgres + Prisma,
   NextAuth, real privacy/deletion design
 
@@ -85,6 +98,14 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
   the user can judge if it's too big for their target chat.
 - **Export with zero nodes selected**: export action is disabled, not an
   error state.
+- **AI draft assist**: a separate, clearly-labeled action from the raw
+  export (never silently replaces it — raw export must keep working with no
+  API key set). Sends the same node content that raw export would produce
+  (selected nodes + one-hop neighbors) to Anthropic's API, asks it to write
+  a concise first-person context brief, and shows the result for the user to
+  copy — Weave never auto-pastes or auto-sends it anywhere else. A missing
+  or invalid key shows a clear inline error, not a silent failure; an API
+  error (rate limit, network) does the same.
 
 ## Boundaries
 - **Always**: run `npm test` before marking a task done, never commit
@@ -98,7 +119,13 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
   isn't additive (needs a migration strategy once users have real data).
 - **Never**: add auto-posting/social/public-sharing behavior (out of scope),
   send persona content to any third-party service without an explicit user
-  action (e.g. the export is copy-to-clipboard, not auto-upload).
+  action (e.g. the export is copy-to-clipboard, not auto-upload; the one
+  exception is AI draft assist, which does send node content to Anthropic —
+  only when the user has supplied their own key AND clicked the
+  clearly-separate "Draft with AI" action, never automatically); store the
+  user's API key anywhere but `localStorage` (no IndexedDB, no cookie, never
+  logged to the console, never included in error reports or telemetry);
+  send the API key anywhere except directly to `api.anthropic.com`.
 
 ## Success Criteria
 - [x] User can open the app with zero setup and create a persona node (title,
@@ -111,11 +138,25 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
 - [x] User can select nodes (or "all") and export a combined markdown context
       block that includes directly-linked neighbors of selected nodes.
 - [x] Export is disabled when selection is empty.
-- [ ] Deployed, reachable via a public URL, works for a first-time visitor
-      with zero existing data (empty state doesn't break).
+- [x] Deployed, reachable via a public URL, works for a first-time visitor
+      with zero existing data (empty state doesn't break). —
+      https://weave-three-dusky.vercel.app/
 - [x] UI reviewed by product-manager against `DESIGN.md` and doesn't read as
       generic/templated AI output (default bento grids, stock gradients,
       centered-hero-two-buttons, etc.).
+
+### AI draft assist (addendum)
+- [ ] User can enter an Anthropic API key in a settings affordance; it's
+      stored in `localStorage` only and persists across reloads.
+- [ ] Raw export (copy-to-clipboard) still works with zero setup, no key
+      required — AI draft assist is additive, never a replacement.
+- [ ] With a key set, "Draft with AI" sends the current selection (same
+      content raw export would use) to Anthropic and shows a synthesized
+      first-person brief instead of raw concatenation.
+- [ ] No key set: "Draft with AI" shows a clear inline prompt to add one,
+      not a silent no-op or a crash.
+- [ ] An API error (bad key, rate limit, network failure) shows a clear
+      inline error, not a silent failure or an unhandled rejection.
 
 ## Open Questions
 1. **Resolved.** v0 is validated once the founder personally builds 5+

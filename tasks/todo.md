@@ -181,7 +181,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Files: (fixes only, as needed — no new files expected)
   - Dependencies: Task 14
 
-- [ ] Task: Deploy to Vercel
+- [x] Task: Deploy to Vercel
   - Acceptance: App builds and deploys on Vercel as a static/client app (no
     DB/server env needed); public URL loads correctly for a first-time
     visitor with zero existing data (empty state, no console errors).
@@ -191,8 +191,8 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Dependencies: Task 15
 
 ### Checkpoint C — Ship
-- [ ] All SPEC.md Success Criteria checked off
+- [x] All SPEC.md Success Criteria checked off
 - [x] `npx playwright test` passes
-- [ ] App reachable at a public Vercel URL, verified with zero existing data
+- [x] App reachable at a public Vercel URL, verified with zero existing data
 - [x] Open Question 1 (v1 validation trigger) has a rough answer recorded
       somewhere (e.g. SPEC.md or plan.md) before calling v0 done

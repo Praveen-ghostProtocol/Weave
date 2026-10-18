@@ -2,10 +2,12 @@
 
 :root {
   --surface: #f4f3f0;
+  --surface-raised: #ffffff;
   --ink: #211f1b;
   --ink-muted: #6b6a63;
   --line: #dedcd5;
   --accent: #3d5a45;
+  --danger: #a23b2e;
 }
 
 @theme inline {
@@ -16,10 +18,12 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --surface: #1a1b17;
+    --surface-raised: #22241e;
     --ink: #ECEAE3;
     --ink-muted: #9b9a8f;
     --line: #34362e;
     --accent: #74ae87;
+    --danger: #d97862;
   }
 }
 

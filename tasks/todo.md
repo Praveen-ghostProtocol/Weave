@@ -192,7 +192,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
 
 ### Checkpoint C — Ship
 - [ ] All SPEC.md Success Criteria checked off
-- [ ] `npx playwright test` passes
+- [x] `npx playwright test` passes
 - [ ] App reachable at a public Vercel URL, verified with zero existing data
-- [ ] Open Question 1 (v1 validation trigger) has a rough answer recorded
+- [x] Open Question 1 (v1 validation trigger) has a rough answer recorded
       somewhere (e.g. SPEC.md or plan.md) before calling v0 done

@@ -118,6 +118,7 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
       centered-hero-two-buttons, etc.).
 
 ## Open Questions
-1. At what point (node count, session count, user feedback) do we call the
-   core loop "validated" and start v1 (accounts/backend)? Not blocking v0
-   build, but worth a rough answer before v0 ships so we're not guessing.
+1. **Resolved.** v0 is validated once the founder personally builds 5+
+   linked persona nodes across 2+ domains and still finds the exported
+   context useful two weeks later. Starts v1 (accounts/backend) at that
+   point, not before.

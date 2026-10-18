@@ -118,6 +118,16 @@ Deploy to Vercel
 2. **Domain tag — resolved: free-form string.** Node editor offers
    autocomplete from previously-used tags (not a closed dropdown). Lower
    risk, matches the spec's own loosely-defined examples.
+5. **Known gap, deferred, not silently skipped: narrow-viewport layout.**
+   DESIGN.md §4 calls for only one panel (export sidebar / node editor)
+   open at a time on narrow viewports; the current integration always
+   shows the export sidebar and the node editor itself is a fixed 420px
+   panel with zero responsive handling (overflows a ~375-414px viewport
+   outright). SPEC.md's Success Criteria don't mention mobile, so this
+   isn't blocking Checkpoint B/C, but it's a real DESIGN.md compliance
+   gap, not a hypothetical — needs its own small task before calling v0
+   polished: responsive widths on NodeEditor/ExportPanel plus hiding the
+   export sidebar while the editor is open on narrow screens.
 3. **Link-creation interaction — resolved: react-flow native drag-from-handle.**
    Least code (library default), matches how graph UIs conventionally work;
    no separate "Link" button needed.

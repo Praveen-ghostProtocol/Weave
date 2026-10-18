@@ -6,7 +6,14 @@
 // container themselves. Positioning this panel inside the app layout is the
 // integration task's job, not this component's (it just assumes it gets
 // slotted into a flex/grid parent at full height).
-import { useId, useMemo, useState, type FormEvent } from "react";
+import {
+  forwardRef,
+  useId,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import { useGraph } from "@/lib/storage/useGraph";
 
 interface NodeEditorProps {
@@ -14,7 +21,19 @@ interface NodeEditorProps {
   onClose: () => void;
 }
 
-export default function NodeEditor({ nodeId, onClose }: NodeEditorProps) {
+// Exposed to the parent so it can check for unsaved changes before swapping
+// which node this panel edits (e.g. clicking a different graph node, or
+// "+ New node", while mid-edit) — a `key` change remounts this component
+// directly, bypassing its own Cancel button and any state it holds, so the
+// parent needs to ask *before* triggering that remount, not after.
+export interface NodeEditorHandle {
+  isDirty: () => boolean;
+}
+
+const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEditor(
+  { nodeId, onClose },
+  ref,
+) {
   const { graph, addNode, updateNode, deleteNode } = useGraph();
   const existing = nodeId ? graph.nodes.find((n) => n.id === nodeId) ?? null : null;
 
@@ -51,6 +70,12 @@ export default function NodeEditor({ nodeId, onClose }: NodeEditorProps) {
   }, [graph.nodes]);
 
   const canSave = title.trim().length > 0;
+  const isDirty =
+    title !== (existing?.title ?? "") ||
+    domain !== (existing?.domain ?? "") ||
+    body !== (existing?.body ?? "");
+
+  useImperativeHandle(ref, () => ({ isDirty: () => isDirty }), [isDirty]);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -67,6 +92,14 @@ export default function NodeEditor({ nodeId, onClose }: NodeEditorProps) {
         position: { x: Math.random() * 200, y: Math.random() * 200 },
       });
     }
+    onClose();
+  }
+
+  function handleCancel() {
+    // DESIGN.md §7: warn before discarding an unsaved edit — the dirty
+    // check the parent uses via the ref above, but Cancel is this
+    // component's own button, so it can just check its own local state.
+    if (isDirty && !window.confirm("Discard unsaved changes?")) return;
     onClose();
   }
 
@@ -156,7 +189,7 @@ export default function NodeEditor({ nodeId, onClose }: NodeEditorProps) {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleCancel}
             className="rounded-[6px] border border-[var(--line)] px-4 py-2 text-sm font-medium text-[var(--ink)] transition-transform active:scale-[0.98]"
           >
             Cancel
@@ -172,4 +205,6 @@ export default function NodeEditor({ nodeId, onClose }: NodeEditorProps) {
       </div>
     </form>
   );
-}
+});
+
+export default NodeEditor;

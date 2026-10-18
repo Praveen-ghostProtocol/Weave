@@ -196,3 +196,93 @@ should be answered before Tasks 10, 12, and 13 respectively.
 - [x] App reachable at a public Vercel URL, verified with zero existing data
 - [x] Open Question 1 (v1 validation trigger) has a rough answer recorded
       somewhere (e.g. SPEC.md or plan.md) before calling v0 done
+
+## Phase 5: AI draft assist
+
+Confirmed before any task below was written (see plan.md's Open Questions /
+Risks): direct browser calls to `api.anthropic.com` work and are officially
+supported, gated behind the `anthropic-dangerous-direct-browser-access: true`
+request header — this is not a backend-required feature, the SPEC.md
+addendum's "no backend" premise holds.
+
+- [ ] Task: API key local storage wrapper
+  - Acceptance: `getApiKey()`, `setApiKey(key)`, `clearApiKey()`, and
+    `hasApiKey()` read/write a single key under one `localStorage` key name;
+    `setApiKey("")` or whitespace-only is treated as clearing, not storing an
+    empty string; nothing here ever calls `console.log`/`console.error` with
+    the key value.
+  - Verify: `npm test` — unit tests cover set → get round-trip, clear removes
+    it, `hasApiKey()` reflects presence correctly, empty/whitespace input
+    clears rather than stores.
+  - Files: `lib/storage/apiKey.ts`, `tests/apiKey.test.ts`
+  - Dependencies: None
+
+- [ ] Task: Anthropic direct-fetch client
+  - Acceptance: `draftContext(markdown, apiKey)` POSTs to
+    `https://api.anthropic.com/v1/messages` with headers `x-api-key`,
+    `anthropic-version`, and `anthropic-dangerous-direct-browser-access:
+    "true"` (required for the request to pass Anthropic's CORS check from a
+    browser origin — confirmed in plan.md, not assumed); sends the export
+    markdown (same content raw export would produce) as the user message
+    with a system prompt asking for a concise first-person context brief;
+    returns the response text on success; throws a typed error distinguishing
+    at least "invalid key" (401), "rate limited" (429), and "network/other"
+    so the UI can show a specific message, per SPEC.md's addendum success
+    criteria. Pure function aside from the `fetch` call — no DOM, no
+    `localStorage` access inside this module (caller passes the key in).
+  - Verify: `npm test` — unit tests mock `fetch` and cover: success path
+    returns the text, 401 throws the "invalid key" variant, 429 throws the
+    "rate limited" variant, a rejected/thrown fetch (network failure) throws
+    the "network" variant.
+  - Files: `lib/llm/anthropic.ts`, `tests/anthropic.test.ts`
+  - Dependencies: None
+
+- [ ] Task: Settings affordance (API key UI) in the export sidebar
+  - Acceptance: Per DESIGN.md's "Export sidebar — AI draft assist" section —
+    a ghost icon button (ink-muted when no key, accent-tinted when a key is
+    set, with a text-equivalent `aria-label`/`title` for the status, not
+    color alone) in the sticky header toggles an inline row with a labeled
+    `type="password"` input, "Save", and "Clear"; Save persists via Task 17
+    and collapses the row; the row never renders the stored key value back
+    into a visible/plaintext state beyond normal password-field behavior.
+  - Verify: Manual check — open the row, enter a key, save, reload the page,
+    confirm the icon shows "key set" status and the row is collapsed by
+    default; clear the key, confirm status reverts.
+  - Files: `components/ExportPanel.tsx`
+  - Dependencies: Task 17
+
+- [ ] Task: "Draft with AI" action and result display
+  - Acceptance: Per DESIGN.md — a second, secondary-styled button below
+    "Export selection", same disabled-at-zero-selection treatment; clicking
+    with no key stored expands/focuses the Task 19 settings row instead of
+    calling the API (no silent no-op); clicking with a key present calls
+    Task 18's `draftContext` with the same markdown `exportContext` (lib/
+    graph/export.ts) would produce for the current selection; shows
+    "Drafting…" (button disabled, no spinner) while in flight; on success,
+    renders the result block above the footer (label, "Copy" button, "×"
+    dismiss, read-only scrollable text) per DESIGN.md; on error, button
+    shows "Draft failed — try again" with `--danger` border and an inline,
+    `aria-live` error line naming which failure it was (bad key / rate
+    limit / network); dismissing the result clears it without touching the
+    current node selection; raw "Export selection" continues to work
+    unchanged regardless of AI draft assist's state (additive, never a
+    replacement, per SPEC.md).
+  - Verify: Manual check — with no key: click "Draft with AI", confirm
+    settings row opens instead of a request firing. With a key: draft a
+    selection, confirm result text appears and "Copy" copies it; dismiss and
+    confirm checkbox list / raw export still work. Force an error path
+    (e.g. temporarily invalid key) and confirm the specific inline error
+    text appears, not a crash or silent failure.
+  - Files: `components/ExportPanel.tsx`
+  - Dependencies: Task 18, Task 19
+
+### Checkpoint D — AI draft assist
+- [ ] `npm test` passes (Tasks 17–18's unit tests)
+- [ ] `npm run build` succeeds
+- [ ] All five "AI draft assist (addendum)" Success Criteria checkboxes in
+      SPEC.md verified by hand: key persists across reload; raw export works
+      with zero setup; drafting with a key shows a synthesized brief;
+      no-key click shows an inline prompt, not a no-op; a forced API error
+      shows a clear inline error, not a silent failure
+- [ ] product-manager design review against DESIGN.md's AI draft assist
+      section before calling this phase done

@@ -143,3 +143,68 @@ Deploy to Vercel
    real usage to justify the CI time.
 
 Only #1 is still genuinely open and doesn't block any task.
+
+## Phase 5: AI draft assist — architecture & risk
+
+### CORS / direct-browser-access (checked for real, not assumed)
+This was flagged as a potential blocker before any task was written, because
+if Anthropic's API required a server-side caller, SPEC.md's "no backend,
+BYOK, direct browser fetch" premise would be wrong and the whole approach
+would need rethinking. Checked against the current official docs
+(`platform.claude.com/docs/en/cli-sdks-libraries/sdks/typescript`) and a
+corroborating find (Simon Willison, Aug 2024, on the TypeScript SDK's PR
+history):
+
+- **Direct browser calls to `api.anthropic.com` are supported.** They are
+  blocked by CORS *unless* the request includes the header
+  `anthropic-dangerous-direct-browser-access: true`. With that header
+  present, the preflight passes and the call succeeds.
+- The TypeScript SDK's own browser gate (`dangerouslyAllowBrowser`) exists
+  for the same reason the header is named "dangerous": a key embedded in
+  client code is extractable by anyone with page access. Anthropic's own
+  docs call out exactly this product's shape as a case where that's an
+  acceptable tradeoff — "internal tools" and bring-your-own-key setups
+  where the exposed credential is the *user's own*, not the developer's.
+  That's this feature exactly: the user supplies their own key, it's used
+  only for their own requests, stored only in their own browser.
+- **Conclusion: the approach is sound, no backend/proxy needed.** We don't
+  need the `@anthropic-ai/sdk` package for this (ponytail: one endpoint,
+  one `fetch` call, per SPEC.md's own Tech Stack entry) — just a raw
+  `fetch` to `https://api.anthropic.com/v1/messages` with `x-api-key`,
+  `anthropic-version`, and the dangerous-access header set.
+
+### Where the fetch call lives
+`lib/llm/anthropic.ts` — a standalone function (`draftContext(markdown,
+apiKey)`), not a class, not a client object with config state (nothing here
+needs to persist between calls). Pure aside from the network call itself:
+takes the key and content as arguments, returns text or throws a typed
+error. No `localStorage` access inside this module — keeps it unit-testable
+with a mocked `fetch` and keeps "the key touches `localStorage` in exactly
+one place" true, which matters for the never-log/never-leak boundary in
+SPEC.md. Mirrors how `lib/graph/export.ts` stays framework-free and
+testable.
+
+### API key handling
+- `type="password"` on the input (DESIGN.md's accessibility note) — doesn't
+  stop a browser extension or devtools inspection, but it's the baseline
+  browser affordance against shoulder-surfing and this is otherwise a
+  prominently browser-side-stored secret by design (SPEC.md's own choice,
+  not a gap to fix here).
+- One `localStorage` key, read at call time, never held in React state
+  longer than the input's own controlled-value lifetime — avoids the key
+  sitting in a component's state tree (and React DevTools) any longer than
+  necessary.
+- Never passed to `console.*`, never included in a thrown error's message
+  (errors from Task 18 describe the *failure kind*, not request contents).
+
+### Risks and mitigations (additive to the table above)
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| `anthropic-dangerous-direct-browser-access` is an unversioned, lightly-documented header (found via SDK source/community write-ups, not a prominent docs page) — Anthropic could change its behavior | Medium — draft assist breaks for all users at once if so | Isolated in one module (`lib/llm/anthropic.ts`); a change surfaces as one failing unit test + one place to fix, not a scattered rewrite. |
+| User pastes a key with leading/trailing whitespace or a non-`sk-ant-...` string | Low — confusing 401 | `apiKey.ts`'s `setApiKey` trims input; the fetch client's 401 path shows "invalid key," not a generic error, so the failure is at least legible. |
+| Rate limiting / cost: a user's own key, their own usage and bill — not Weave's cost | None for us | No action needed; worth a one-line mention in the settings row's helper text if it gets confusing in practice, not blocking. |
+| Someone treats the exposed-key tradeoff as acceptable for a key that *isn't* their own (e.g. a shared/team key pasted into a personal browser) | Medium — SPEC.md's safety argument assumes a personal key | Out of this feature's control; the settings row's copy ("Stored only in this browser") is the honest disclosure, same spirit as Anthropic's own browser-support docs. |
+
+### Open Questions (Phase 5)
+None blocking. The one thing that could have blocked this phase (CORS /
+direct-browser feasibility) is resolved above.

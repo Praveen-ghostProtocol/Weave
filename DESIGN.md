@@ -98,6 +98,56 @@ live as selection changes. The export action is a single full-width button
 at the bottom, disabled (not hidden) at zero selection with `--ink-muted`
 text so it's visibly inert rather than visibly broken.
 
+**Export sidebar — AI draft assist (addendum).** Raw export stays exactly as
+above and stays primary — it's the zero-setup default. AI draft assist adds
+to this sidebar, it doesn't get its own surface, its own route, or a
+different visual language. No message bubbles, no avatar, no "AI is
+typing" animation — this is a second button and a text result, not a chat
+product.
+
+- **API key — a settings affordance, not a form field in the main flow.**
+  A small icon-only button (Phosphor `Key`, 16px, ghost — no border at
+  rest) sits in the sticky header next to "Select all / Select none". Its
+  tint *is* the key-status indicator: `--ink-muted` when no key is stored,
+  `--accent` when one is. Click expands an inline row directly below the
+  header (pushes the checkbox list down, nothing floats over the canvas):
+  a labeled `type="password"` input ("Anthropic API key"), a "Save" button,
+  and a "Clear" text link. Helper text below the input, 12px `--ink-muted`:
+  "Stored only in this browser. Used only to call Anthropic directly." Save
+  collapses the row back to the icon. This is the only place the key is
+  ever shown or edited — never surfaced in the export flow itself.
+- **The action pair.** The footer below the checkbox list now holds two
+  stacked, full-width, same-height buttons, 8px gap: "Export selection"
+  (unchanged — filled `--accent`, primary) above "Draft with AI" (secondary
+  — 1px `--line` border, `--ink` text, transparent fill). Same disabled
+  treatment at zero selection as today (`--ink-muted` text, `--line`
+  border). The outline-vs-filled distinction is the only new visual
+  grammar, and it reuses tokens the disabled state already established
+  (muted border+text = inert, full-contrast border+text = enabled-but-
+  secondary) — no new color, no new radius.
+- **No key set.** "Draft with AI" stays enabled-looking (not greyed — this
+  isn't a broken state, it's a discoverable one). Clicking it with no key
+  stored expands the settings row above (per above) and focuses the input,
+  instead of firing a request. No silent no-op, no crash.
+- **Loading.** Button label swaps to "Drafting…", button disabled for the
+  duration. No spinner glyph, no shimmer — matches the existing
+  "Export selection" → "Copied" label-swap pattern already in this sidebar.
+  One state-machine idiom for both buttons, not two half-finished ones.
+- **Error.** Button label swaps to "Draft failed — try again",
+  `--danger`-tinted border (same `data-state="error"` pattern the export
+  button already uses), plus one inline line of actual error text below the
+  footer (bad key vs. rate limit vs. network — whichever it was, not a
+  generic "something went wrong").
+- **Result.** On success, a result block appears *above* the footer
+  buttons (between the checkbox list and the action pair, inside the same
+  panel — not a new overlay, not a modal): a small "AI draft" label, a
+  "Copy" text button beside it, a dismiss (×), and a read-only, selectable
+  text block (`max-h-60 overflow-y-auto`, 14px Plex Sans — it's prose, not
+  data, so it doesn't get Plex Mono) holding the synthesized brief. Copy
+  copies just that text, independent of the raw-export clipboard state.
+  Dismissing clears the result without clearing the selection, so the user
+  can immediately try raw export or redraft.
+
 Shared layout rule: canvas is the base layer; editor and export sidebar are
 panels that sit on top of it from opposite edges, never a third column that
 permanently shrinks the canvas. Only one panel open at a time on narrow
@@ -144,6 +194,14 @@ transform transition. Animate `transform`/`opacity` only.
   `--surface` and `--surface-raised` in both modes — verify this once real
   Tailwind tokens are set, the hexes above were picked for it but weren't
   run through a checker.
+- API key input is `type="password"` (no plaintext key visible over a
+  shoulder) but has a visible label, not placeholder-as-label, same as
+  every other field. The key-status icon's color difference is not the
+  only signal — it also needs a text equivalent (`aria-label`/`title`:
+  "API key set" / "No API key set") since color alone isn't an accessible
+  state indicator. A draft error is announced (e.g. `role="alert"` or
+  `aria-live="polite"` on the inline error line), not just visually swapped
+  in, so it isn't silent for screen-reader users either.
 
 ## 8. Explicit avoid list
 
@@ -168,6 +226,10 @@ like this look AI-templated instead of designed:
   like."** The accent is moss green, specified above, everywhere.
 - **A bespoke "no data" illustration for the empty state.** Use the actual
   canvas, per Section 5.
+- **Chat-app visual language for AI draft assist.** No message bubbles, no
+  avatar/chat-head icon, no "AI is typing" shimmer or animated dots. It's a
+  button and a text result in the existing export sidebar, not a chatbot
+  bolted onto the side.
 
 ---
 

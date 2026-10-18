@@ -213,3 +213,170 @@ testable.
 ### Open Questions (Phase 5)
 None blocking. The one thing that could have blocked this phase (CORS /
 direct-browser feasibility) is resolved above.
+
+---
+
+## Weave v1: capability map (Phase 0 — Scope Check)
+
+Produced by the planning agent (combined ceo+product-manager read) in
+response to the founder's request to take Weave public. Full feasibility
+assessment; per-module specs happen one at a time, in build order, not all
+at once. SPEC.md's Objective/Tech Stack/Boundaries/Success Criteria already
+reflect the founder's confirmed decisions (Supabase, $20/mo cap, Google
+OAuth only, BYOK retired, guest mode kept, persona data stays local).
+
+### Capability map
+
+"Depends on" means the module needs the listed modules first. No cycles.
+
+| # | Module id | Responsibility | Depends on | Size | Status |
+|---|---|---|---|---|---|
+| 1 | `platform-backend` | Next.js stops being static: route handlers, Postgres (accounts/sessions/usage ledger only), server-only secrets, migrations, error logging that never records content | none (root) | S | **Slice 1 — building now** |
+| 2 | `auth` | Accounts, sessions, Google OAuth sign-in/out, account deletion, guest mode preserved, per-user isolation via Supabase row-level security | platform-backend | M | **Slice 1 — building now** |
+| 3 | `llm-proxy` | All OpenAI calls server-side: fixed task endpoints only (no free-form prompt from client), per-task model routing (nano/mini), reserve-then-settle dollar ledger, rate limits, $20/mo global cap, kill switch. Existing "Draft with AI" moves onto it | platform-backend, auth | M–L | **Slice 1 — building now** |
+| 4 | `sub-nodes` | Optional `parentId` on PersonaNode, tree invariants (single parent, no cycles), delete = re-parent children (not cascade), editor + canvas support | none (pure `lib/graph/types.ts` change, no backend needed) | M | Slice 2 (can start anytime, independent of Slice 1) |
+| 5 | `ai-export-selection` | User states a purpose; AI returns relevant node ids + a one-line reason each (structured output, validated against the real graph — hallucinated ids dropped); pre-checks the existing checkbox list | llm-proxy | S | Slice 2 |
+| 6 | `ai-node-drafting` | User enters a title; AI asks 3–5 follow-up questions as form fields (interview form, not a chat thread — see Open Question 3); a second call drafts the body into the existing textarea, unsaved, for the user to edit | llm-proxy (soft: sub-nodes, if it suggests a parent) | M | Slice 3 |
+| 7 | `ai-structure-suggestions` | "This looks like it belongs under X" / "link X and Y," always dismissible, never auto-applied | llm-proxy, sub-nodes | M | Slice 4 |
+| 8 | `billing` | Stripe, entitlements, gates the gpt-5.4 flagship tier | auth, llm-proxy | M–L | Deferred |
+| 9 | `cloud-sync` | Persona graph moves server-side for multi-device access — **this is where the real privacy/deletion/encryption design SPEC.md has always deferred actually has to get built** | auth, platform-backend | L | Deferred |
+| 10 | `graph-indexing` | Stored AI summaries/embeddings/retrieval for very large graphs | llm-proxy (benefits from cloud-sync) | M | Deferred, possibly never — see below |
+
+```
+platform-backend ──> auth ──> llm-proxy ──┬──> ai-export-selection
+                       │          │       ├──> ai-node-drafting
+                       │          │       └──> ai-structure-suggestions <── sub-nodes (independent)
+                       │          └──> billing (deferred)
+                       └──> cloud-sync (deferred) ···> graph-indexing (deferred)
+```
+
+### Why this is smaller than it first looks
+
+**Persona data never has to leave the browser for Slice 1.** Login exists
+only to meter AI usage against the founder's OpenAI budget — not to move
+graph content server-side. `llm-proxy` can be stateless: the client already
+holds the graph, sends only what's needed on an explicit AI action, the
+server builds the prompt and forwards it, and nothing about the graph is
+stored. The Postgres DB holds only accounts/sessions/the usage ledger. This
+is the single biggest scope-reduction in the whole map, and it's also why
+Slice 1 doesn't trigger SPEC.md's "real privacy design before any real
+backend goes live" gate — no persona content is ever stored server-side.
+`cloud-sync` is the module that actually needs that gate, and it's
+deferred.
+
+### `llm-proxy`: the module that can lose real money, so it's the riskiest
+
+- **Reserve-then-settle, not check-then-call**: before calling OpenAI,
+  reserve the worst-case cost (estimated input + `max_output_tokens` at that
+  model's price) in one Postgres transaction. Settle to the real `usage`
+  after the response, refund the difference. A naive "check remaining
+  budget, then call" has a race under concurrent requests.
+- **Fixed task endpoints only** (`draft-brief`, `select-nodes`, `draft-node`,
+  `suggest-structure`) — the client sends data, never a prompt. The server
+  builds every prompt, caps input tokens (~15k), caps `max_output_tokens`.
+  No generic `/chat` passthrough, ever.
+- **Reasoning tokens are the main way cost estimates break.** GPT-5.x bills
+  hidden reasoning as output tokens — at default effort this can 2-3x a
+  call's real cost. Every call must set the lowest reasoning effort the
+  model accepts and a hard `max_output_tokens` cap (which includes
+  reasoning).
+- **Defense in depth, strongest first**: (1) OpenAI prepaid credits,
+  auto-recharge off — the real hard stop at the provider. (2) a dedicated
+  OpenAI project/key for Weave with budget alerts. (3) the $20/mo
+  app-level global cap in the ledger (50%/80% alerts, 100% = "AI paused,"
+  raw export keeps working). (4) per-user daily/monthly dollar quotas,
+  reserve-then-settle. (5) per-user rate limits (requests/min, concurrent).
+  (6) fixed endpoints + input/output caps + lowest reasoning effort (above).
+  (7) a kill-switch env var. (8) `safety_identifier` (hashed user id) on
+  every OpenAI call. (9) usage logs record (user, task, model, tokens,
+  cost) — never content.
+- **No anonymous AI.** Per-IP limits are weak (IPv6 rotation, carrier NAT);
+  login is the real gate. Guests get full v0 (local graph, raw export), no
+  AI.
+
+### Cost reference (OpenAI, per developers.openai.com/api/docs/pricing,
+fetched 2026-10-18 — verify before relying on these, pricing moves fast)
+
+| Model | Input/1M | Cached input/1M | Output/1M |
+|---|---|---|---|
+| gpt-5.4-nano | $0.20 | $0.02 | $1.25 |
+| gpt-5.4-mini | $0.75 | $0.075 | $4.50 |
+| gpt-5.4 (flagship, gated behind `billing`) | $2.50 | $0.25 | $15.00 |
+
+Per-feature estimate (zero reasoning tokens; add up to 2-3x for reasoning
+overhead at default effort — the proxy sets lowest effort to avoid this):
+
+| Feature (request shape) | nano | mini |
+|---|---|---|
+| Draft brief (2.5k in / 500 out) | ~$0.0011 | ~$0.0041 |
+| Node drafting, 2 calls (2.5k/700 total) | ~$0.0014 | ~$0.0050 |
+| Export selection over a digest (2k/150) | ~$0.0006 | ~$0.0022 |
+| Structure suggestions over a digest (2k/300) | ~$0.0008 | ~$0.0029 |
+
+$20/month covers roughly 4,000-18,000 mini-tier actions (more on nano),
+before any per-user quota even kicks in — per-user quotas are what actually
+prevent one visitor from eating the whole cap.
+
+### `sub-nodes`: data model is easy, canvas UX is the risk (same lesson as v0's GraphView task)
+
+Pure functions (`setParent` + cycle check, `getDescendants`, delete =
+re-parent not cascade) are small and testable. react-flow's native
+`parentId` nesting constrains child dragging to the parent's bounds — most
+likely place to overrun scope, same as v0's original graph-view task.
+Recommendation: separate cards with a distinct containment connector first,
+not nested container rendering (less react-flow work). Tree, not DAG
+(`parentId` is a field, not a new edge type — "contains" and "relates to"
+mean different things). Domain tag inherits from parent by default,
+editable. Export: selecting a parent needs one written rule for whether
+descendants count as "neighbors" for the one-hop expansion.
+
+### `graph-indexing` ("graphify"): premature now, two cheap pieces worth having early
+
+Token cost is not the real driver at this scale — a 50-node graph (~15k
+tokens) costs about $0.01 on mini, and gpt-5.4 has 272k context. Two
+near-free pieces fold into other modules instead of becoming their own:
+1. **`graphDigest(graph)`**: a deterministic, non-AI pure function (title,
+   domain, parentId, neighbor ids, first ~150 chars of body per node) —
+   cuts whole-graph calls 5-10x, shared by `ai-export-selection` and
+   `ai-structure-suggestions`, never goes stale, no AI summaries to
+   maintain. Build inside `ai-export-selection`.
+2. **Prompt ordering for OpenAI's automatic prompt-prefix caching**: static
+   system prompt → deterministically-serialized graph → variable part last.
+   Cached input is ~90% cheaper. No extra code beyond ordering. Build
+   inside `llm-proxy`.
+
+Defer real graph-indexing (stored AI summaries, embeddings, retrieval)
+until a real user's graph exceeds ~50k tokens, or the digest measurably
+hurts selection quality, or `cloud-sync` exists (so summaries can be
+computed server-side on save). May never be needed for a personal graph.
+
+### Design/boundary tensions that block later slices, not Slice 1
+
+- **`ai-node-drafting` (Slice 3)**: DESIGN.md explicitly bans chat-bubble/
+  chat-app visual language. A true conversational flow means amending that
+  rule on purpose. Recommended instead: an interview form — one AI call
+  returns 3-5 follow-up questions shown as labeled fields in the existing
+  NodeEditor, a second call drafts the body as editable proposed text.
+  Bounded cost (2-3 calls), no DESIGN.md amendment needed. This is still an
+  open decision (SPEC.md Open Question 3) — not resolved yet.
+- **`ai-structure-suggestions` (Slice 4)**: auto-triggering on every save
+  would violate SPEC.md's "explicit user action" boundary and burns budget
+  on every edit. Three options, still open (SPEC.md Open Question 3): (1) a
+  "Suggest structure" button only (no boundary change, recommended for
+  first ship), (2) an opt-in auto-trigger toggle (requires amending the
+  Boundaries section on purpose, plus debouncing + a daily cap), (3) a
+  zero-AI local heuristic (title/domain string matching) running
+  automatically for free, with real AI analysis staying behind a button.
+
+### Verdict
+
+Feasible as one cohesive plan. Real risks are (1) correctness of the spend
+controls — the only part that can cost real money — (2) scope (7 buildable
+modules + 3 deferred, several times v0's size), (3) the privacy obligations
+`cloud-sync` will eventually trigger, (4) the two open design/boundary
+decisions above. Recommended build order: Slice 1 (this phase) → Slice 2
+(`ai-export-selection` + `sub-nodes`, independent of each other) → Slice 3
+(`ai-node-drafting`, blocked on its open decision) → Slice 4
+(`ai-structure-suggestions`, blocked on sub-nodes + its open decision) →
+deferred modules only when there's real demand or graphs outgrow the
+digest.

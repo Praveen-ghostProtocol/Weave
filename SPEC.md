@@ -11,33 +11,53 @@ User: someone who's tired of re-explaining who they are to an AI every time,
 and wants a living, structured "about me" they maintain once and reuse
 everywhere.
 
-**v0 validates one thing only: will a user actually build and link persona
-nodes, and find the exported context useful.** No accounts, no backend — see
-Tech Stack. If the loop proves out, v1 adds accounts/sync; only then does a
-real privacy/data-handling design (encryption at rest, deletion semantics,
-backups) get built, before any real backend goes live.
+**v0 validated the core loop**: a user builds and links persona nodes and
+finds the exported context useful. The founder is moving to public launch
+now, on their own judgment, ahead of the original "2 weeks of personal use"
+bar in Open Question 1 below — a deliberate override, not an oversight.
 
-Out of scope for this spec: ChatGPT/Claude plugin (MCP bridge — phase 2),
-any social/sharing features (phase 3, only if there's traction).
+Out of scope for this spec: ChatGPT/Claude plugin (MCP bridge), any social/
+sharing features (only if there's traction later).
 
-**Addendum — AI draft assist.** The raw export (concatenated node content)
-is the default and still works with zero setup. Additionally, a user can
-optionally supply their own Anthropic API key (stored in their browser only)
-and have Weave call Claude directly to turn the selected nodes into a
-polished, synthesized prompt instead of raw concatenation. This stays
-"no backend": the browser calls Anthropic's API directly, nothing is
-proxied or stored server-side. See the new Boundaries entries and Success
-Criteria below for the rules this must follow.
+**v1 — Public Launch (Slice 1), capability-mapped by the planning agent.**
+Goal: anyone can use Weave's AI features without needing their own API key,
+without the founder's OpenAI budget being drainable by abuse, and without
+rebuilding more than necessary. Full capability map and the modules deferred
+past Slice 1 (sub-nodes, AI node drafting, AI export selection, proactive
+structure suggestions, graph indexing, billing, cloud sync) live in
+`tasks/plan.md`'s "Weave v1" section — this spec covers Slice 1 only:
+`platform-backend` + `auth` + `llm-proxy`.
 
-**Known, accepted tradeoff of this architecture** (not a bug, flagged by
-red-team review): because the browser calls Anthropic directly, the API key
-is visible in plaintext in that browser's own Network tab/devtools on every
-request — inherent to "no backend, no proxy," not something code can fix
-without reintroducing a server. Anyone with devtools access to the user's
-own browser session (or a malicious extension) could read it. Acceptable
-for a v0 BYOK feature the user opts into with their own key; would need
-revisiting if this pattern carries into a version other people use with
-keys that aren't theirs.
+**The one scope decision that keeps this small**: persona graph data stays
+in the browser (IndexedDB), exactly as in v0 — login exists only to meter
+AI usage against the founder's budget, not to move persona content to a
+server. This is why Slice 1 does NOT trigger the "real privacy/data-handling
+design (encryption at rest, deletion semantics, backups)" v0 always deferred
+to a real backend going live — no persona content is ever stored
+server-side. That gate still applies whenever `cloud-sync` (deferred,
+capability map) is built.
+
+Confirmed by the founder: Supabase for auth + Postgres (not Auth.js+Neon),
+$20/month hard global OpenAI spend cap with a kill switch, and the BYOK
+Anthropic feature (below) is retired once this ships — one provider, one
+proxy, one error model, not two parallel AI paths in a public product.
+
+**Addendum — AI draft assist (v0, being retired by Slice 1).** The raw
+export (concatenated node content) is the default and still works with zero
+setup — this does not change. v0 additionally let a user supply their own
+Anthropic API key (stored in their browser only) and have Weave call Claude
+directly. **This BYOK path is retired once `llm-proxy` ships** (confirmed by
+the founder) — replaced by the server-side OpenAI proxy, available to
+signed-in users without needing their own key. Kept below for the historical
+record and because it's still live until the replacement ships; do not build
+new features on top of it.
+
+**Known, accepted tradeoff of the v0 BYOK architecture** (not a bug, flagged
+by red-team review, resolved by retiring BYOK): because the browser called
+Anthropic directly, the API key was visible in plaintext in that browser's
+own Network tab/devtools on every request. Acceptable for a v0 feature the
+user opted into with their own key; exactly the reason it doesn't carry into
+the public version, where `llm-proxy` keeps the real key server-side only.
 
 ## Tech Stack
 - Next.js (App Router) + TypeScript + React — static client app, no server-side DB
@@ -47,12 +67,33 @@ keys that aren't theirs.
   no force-directed physics — expected node count per user is small, tens not
   hundreds, so auto-layout is overkill)
 - Deployed on Vercel as a static app (no DB, no server cost)
-- AI draft assist: direct `fetch` to Anthropic's Messages API from the
-  browser (no SDK needed for one endpoint — ponytail: don't add a dependency
-  for what one `fetch` call does). User's API key stored in `localStorage`
+- AI draft assist (v0, being retired): direct `fetch` to Anthropic's
+  Messages API from the browser. User's API key stored in `localStorage`
   only, read at call time, never bundled/committed/logged.
-- **Deferred to v1** (only after the core loop is validated): Postgres + Prisma,
-  NextAuth, real privacy/deletion design
+- **Slice 1 (v1 public launch)**:
+  - Supabase: Postgres + auth (Google OAuth at launch — no passwords, no
+    reset flow, no credential-stuffing surface) + row-level security for
+    per-user isolation of the Postgres tables (accounts, sessions, usage
+    ledger only — never persona content, which stays in the user's own
+    browser IndexedDB as in v0).
+  - Next.js Route Handlers (the app stops being a pure static export;
+    deployed on Vercel Pro — commercial use isn't covered by Hobby).
+  - `llm-proxy`: server-side OpenAI calls only, via fixed task endpoints
+    (the client never sends a free-form prompt) — `gpt-5.4-nano` for
+    structured/cheap tasks, `gpt-5.4-mini` for prose, no `gpt-5.4`
+    (flagship) tier until `billing` exists. Lowest reasoning effort each
+    model accepts, hard `max_output_tokens` cap, prompts ordered for
+    OpenAI's automatic prompt-prefix caching.
+  - Spend controls (defense in depth, see tasks/plan.md for the full list):
+    OpenAI prepaid credits with auto-recharge off (the real hard stop),
+    $20/month app-level global cap with a kill switch, per-user daily/
+    monthly dollar quotas via reserve-then-settle (not just request
+    counts), `safety_identifier` on every OpenAI call.
+- **Deferred past Slice 1** (capability map in tasks/plan.md): `sub-nodes`,
+  `ai-node-drafting`, `ai-export-selection`, `ai-structure-suggestions`,
+  `graph-indexing`, `billing`, `cloud-sync` (this is where the real privacy/
+  deletion design from the old "Deferred to v1" line actually lands, once
+  persona content would ever touch the server).
 
 ## Commands
 ```
@@ -119,23 +160,31 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
 
 ## Boundaries
 - **Always**: run `npm test` before marking a task done, never commit
-  secrets, keep all persona data client-side only in v0 (no network calls
-  that send node content anywhere); write code per the `ponytail` skill —
-  no unrequested abstractions, no boilerplate, the first lazy solution that
-  works; any UI work follows `DESIGN.md` and is checked against
-  `design-taste-frontend`/`web-design-guidelines` before being called done.
-- **Ask first**: adding any backend/DB (this is the v0→v1 boundary), adding
-  a paid dependency or third-party service, any IndexedDB schema change that
-  isn't additive (needs a migration strategy once users have real data).
-- **Never**: add auto-posting/social/public-sharing behavior (out of scope),
-  send persona content to any third-party service without an explicit user
-  action (e.g. the export is copy-to-clipboard, not auto-upload; the one
-  exception is AI draft assist, which does send node content to Anthropic —
-  only when the user has supplied their own key AND clicked the
-  clearly-separate "Draft with AI" action, never automatically); store the
-  user's API key anywhere but `localStorage` (no IndexedDB, no cookie, never
-  logged to the console, never included in error reports or telemetry);
-  send the API key anywhere except directly to `api.anthropic.com`.
+  secrets; write code per the `ponytail` skill — no unrequested
+  abstractions, no boilerplate, the first lazy solution that works; any UI
+  work follows `DESIGN.md` and is checked against `design-taste-frontend`/
+  `web-design-guidelines`; persona graph content stays client-side only
+  (IndexedDB) — Slice 1 adds accounts for AI-usage metering, it does not
+  move persona content to the server; any content sent to OpenAI goes
+  through `llm-proxy` only on an explicit user action (never auto-triggered
+  on save/edit), and is never stored or logged server-side — only
+  (user, task, model, tokens, cost) is logged, never content; the OpenAI
+  key lives only in a server env var, never sent to the client; the
+  session-user id for any OpenAI/DB call always comes from the server
+  session, never trusted from request body/client state.
+- **Ask first**: any module from tasks/plan.md's capability map beyond
+  Slice 1 (sub-nodes, AI node drafting, AI export selection, structure
+  suggestions, graph indexing, billing, cloud sync) — each needs its own
+  spec and explicit go-ahead, not silent scope creep once the backend
+  exists; any change to the $20/month global spend cap or per-user quotas;
+  any IndexedDB/Postgres schema change that isn't additive.
+- **Never**: add auto-posting/social/public-sharing behavior (out of
+  scope); store the OpenAI key anywhere but the server env var; let the
+  `llm-proxy` accept a free-form client-supplied prompt (fixed task
+  endpoints only — the server builds every prompt); skip the reserve-then-
+  settle budget check before an OpenAI call "just this once"; ship Slice 1
+  without the account-deletion flow or without a privacy policy naming
+  OpenAI as a processor.
 
 ## Success Criteria
 - [x] User can open the app with zero setup and create a persona node (title,
@@ -168,8 +217,40 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
 - [x] An API error (bad key, rate limit, network failure) shows a clear
       inline error, not a silent failure or an unhandled rejection.
 
+### Slice 1 — Public launch (platform-backend + auth + llm-proxy)
+- [ ] A visitor can sign in with Google; a session persists across reload;
+      sign-out works.
+- [ ] Guest mode still works exactly like v0 today — full local graph app,
+      raw export, zero setup, no AI — for anyone not signed in.
+- [ ] Signed-in user can use "Draft with AI" without supplying any API
+      key — it calls the server-side proxy using the founder's OpenAI key.
+- [ ] A single OpenAI call never costs the founder more than the per-call
+      cap (input + max_output_tokens bounded, lowest reasoning effort).
+- [ ] Per-user daily/monthly quota is enforced via reserve-then-settle —
+      concurrent requests from one user can't together exceed their quota.
+- [ ] Hitting the $20/month global cap disables AI for everyone (not a
+      crash) and raw export keeps working regardless.
+- [ ] The kill-switch env var disables all AI calls immediately when set.
+- [ ] No persona node content appears in any server log, error report, or
+      Postgres table — verified by reading actual logs after a real
+      "Draft with AI" call, not just by code inspection.
+- [ ] Account deletion removes the user's account/session/usage rows.
+- [ ] A privacy policy naming OpenAI as a processor is live before the
+      Supabase sign-in button is.
+
 ## Open Questions
-1. **Resolved.** v0 is validated once the founder personally builds 5+
-   linked persona nodes across 2+ domains and still finds the exported
-   context useful two weeks later. Starts v1 (accounts/backend) at that
-   point, not before.
+1. **Resolved.** v0's core loop was validated well enough for the founder
+   to move to public launch on their own judgment (see Objective) — the
+   "2 weeks of personal use" bar was consciously overridden, not reached.
+2. **Resolved (Slice 1 decisions, confirmed by the founder).** Supabase
+   over Auth.js+Neon; Google OAuth only at launch (no passwords); guest
+   mode kept, no AI for guests; $20/month global OpenAI spend cap; BYOK
+   Anthropic retired once `llm-proxy` ships; Vercel Pro accepted as a
+   recurring cost.
+3. **Open — decide before its module gets a spec, not now.** Node drafting
+   (Slice 3): chat thread (requires amending DESIGN.md's no-chat-bubbles
+   rule) vs. an interview-style form (recommended — bounded cost, fits
+   existing DESIGN.md rules). Structure suggestions (Slice 4): button-only
+   trigger (recommended, no boundary change) vs. an opt-in auto-trigger
+   toggle (requires amending this Boundaries section's "explicit user
+   action" rule) vs. a zero-AI local heuristic plus an AI button.

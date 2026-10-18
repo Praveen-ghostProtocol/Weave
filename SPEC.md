@@ -29,6 +29,16 @@ polished, synthesized prompt instead of raw concatenation. This stays
 proxied or stored server-side. See the new Boundaries entries and Success
 Criteria below for the rules this must follow.
 
+**Known, accepted tradeoff of this architecture** (not a bug, flagged by
+red-team review): because the browser calls Anthropic directly, the API key
+is visible in plaintext in that browser's own Network tab/devtools on every
+request — inherent to "no backend, no proxy," not something code can fix
+without reintroducing a server. Anyone with devtools access to the user's
+own browser session (or a malicious extension) could read it. Acceptable
+for a v0 BYOK feature the user opts into with their own key; would need
+revisiting if this pattern carries into a version other people use with
+keys that aren't theirs.
+
 ## Tech Stack
 - Next.js (App Router) + TypeScript + React — static client app, no server-side DB
 - Tailwind CSS
@@ -146,16 +156,16 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
       centered-hero-two-buttons, etc.).
 
 ### AI draft assist (addendum)
-- [ ] User can enter an Anthropic API key in a settings affordance; it's
+- [x] User can enter an Anthropic API key in a settings affordance; it's
       stored in `localStorage` only and persists across reloads.
-- [ ] Raw export (copy-to-clipboard) still works with zero setup, no key
+- [x] Raw export (copy-to-clipboard) still works with zero setup, no key
       required — AI draft assist is additive, never a replacement.
-- [ ] With a key set, "Draft with AI" sends the current selection (same
+- [x] With a key set, "Draft with AI" sends the current selection (same
       content raw export would use) to Anthropic and shows a synthesized
       first-person brief instead of raw concatenation.
-- [ ] No key set: "Draft with AI" shows a clear inline prompt to add one,
+- [x] No key set: "Draft with AI" shows a clear inline prompt to add one,
       not a silent no-op or a crash.
-- [ ] An API error (bad key, rate limit, network failure) shows a clear
+- [x] An API error (bad key, rate limit, network failure) shows a clear
       inline error, not a silent failure or an unhandled rejection.
 
 ## Open Questions

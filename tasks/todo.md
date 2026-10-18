@@ -205,7 +205,7 @@ supported, gated behind the `anthropic-dangerous-direct-browser-access: true`
 request header — this is not a backend-required feature, the SPEC.md
 addendum's "no backend" premise holds.
 
-- [ ] Task: API key local storage wrapper
+- [x] Task: API key local storage wrapper
   - Acceptance: `getApiKey()`, `setApiKey(key)`, `clearApiKey()`, and
     `hasApiKey()` read/write a single key under one `localStorage` key name;
     `setApiKey("")` or whitespace-only is treated as clearing, not storing an
@@ -217,7 +217,7 @@ addendum's "no backend" premise holds.
   - Files: `lib/storage/apiKey.ts`, `tests/apiKey.test.ts`
   - Dependencies: None
 
-- [ ] Task: Anthropic direct-fetch client
+- [x] Task: Anthropic direct-fetch client
   - Acceptance: `draftContext(markdown, apiKey)` POSTs to
     `https://api.anthropic.com/v1/messages` with headers `x-api-key`,
     `anthropic-version`, and `anthropic-dangerous-direct-browser-access:
@@ -237,7 +237,7 @@ addendum's "no backend" premise holds.
   - Files: `lib/llm/anthropic.ts`, `tests/anthropic.test.ts`
   - Dependencies: None
 
-- [ ] Task: Settings affordance (API key UI) in the export sidebar
+- [x] Task: Settings affordance (API key UI) in the export sidebar
   - Acceptance: Per DESIGN.md's "Export sidebar — AI draft assist" section —
     a ghost icon button (ink-muted when no key, accent-tinted when a key is
     set, with a text-equivalent `aria-label`/`title` for the status, not
@@ -251,7 +251,7 @@ addendum's "no backend" premise holds.
   - Files: `components/ExportPanel.tsx`
   - Dependencies: Task 17
 
-- [ ] Task: "Draft with AI" action and result display
+- [x] Task: "Draft with AI" action and result display
   - Acceptance: Per DESIGN.md — a second, secondary-styled button below
     "Export selection", same disabled-at-zero-selection treatment; clicking
     with no key stored expands/focuses the Task 19 settings row instead of
@@ -277,12 +277,12 @@ addendum's "no backend" premise holds.
   - Dependencies: Task 18, Task 19
 
 ### Checkpoint D — AI draft assist
-- [ ] `npm test` passes (Tasks 17–18's unit tests)
-- [ ] `npm run build` succeeds
-- [ ] All five "AI draft assist (addendum)" Success Criteria checkboxes in
+- [x] `npm test` passes (Tasks 17–18's unit tests)
+- [x] `npm run build` succeeds
+- [x] All five "AI draft assist (addendum)" Success Criteria checkboxes in
       SPEC.md verified by hand: key persists across reload; raw export works
       with zero setup; drafting with a key shows a synthesized brief;
       no-key click shows an inline prompt, not a no-op; a forced API error
       shows a clear inline error, not a silent failure
-- [ ] product-manager design review against DESIGN.md's AI draft assist
+- [x] product-manager design review against DESIGN.md's AI draft assist
       section before calling this phase done

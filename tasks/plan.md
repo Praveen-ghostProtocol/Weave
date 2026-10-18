@@ -143,6 +143,11 @@ Deploy to Vercel
    real usage to justify the CI time.
 
 Only #1 is still genuinely open and doesn't block any task.
+7. **Known gap, deferred: "Select all"/"Select none" contrast.** Flagged by
+   product-manager during Phase 5's design review — pre-existing (predates
+   AI draft assist), low-severity, worth a DESIGN.md §7 contrast check in
+   dark mode before calling the export sidebar fully polished. Not blocking
+   any checkpoint.
 
 ## Phase 5: AI draft assist — architecture & risk
 

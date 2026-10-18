@@ -7,10 +7,82 @@
 // On narrow viewports opening one closes the other, since both can't fit.
 import { useRef, useState } from "react";
 import { useGraph } from "@/lib/storage/useGraph";
+import { useSession } from "@/lib/supabase/useSession";
 import EmptyState from "@/components/EmptyState";
 import GraphView from "@/components/GraphView";
 import NodeEditor, { type NodeEditorHandle } from "@/components/NodeEditor";
 import ExportPanel from "@/components/ExportPanel";
+
+// Sign-in/account corner affordance (auth module). Additive only: guest
+// mode (below) never reads from this — it renders independently in its own
+// free corner (bottom-left; top-left is "Export", top-right is "+ New
+// node"). Ghost/outline style reused from the "Export" button exactly.
+function AuthCorner() {
+  const { user, loading, signInWithGoogle, signOut } = useSession();
+  const [deleting, setDeleting] = useState(false);
+  // Synchronous guard (same pattern as ExportPanel's draft-submit guard):
+  // the `deleting` disabled state relies on React committing a re-render
+  // before a second trigger lands, which is timing, not a lock.
+  const deleteInFlightRef = useRef(false);
+
+  async function handleDeleteAccount() {
+    if (deleteInFlightRef.current) return;
+    if (!window.confirm("Delete your account? This can't be undone.")) return;
+    deleteInFlightRef.current = true;
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/account", { method: "DELETE" });
+      if (res.ok) {
+        await signOut();
+      } else {
+        window.alert("Failed to delete account. Please try again.");
+        setDeleting(false);
+      }
+    } finally {
+      deleteInFlightRef.current = false;
+    }
+  }
+
+  if (loading) return null;
+
+  if (!user) {
+    return (
+      <div className="absolute left-4 bottom-4 z-10 flex flex-col items-start gap-1.5">
+        <button
+          type="button"
+          onClick={signInWithGoogle}
+          className="rounded-[6px] border border-[var(--line)] bg-[var(--surface-raised)] px-4 py-2 text-sm font-medium text-[var(--ink)] transition-transform active:scale-[0.98]"
+        >
+          Sign in with Google
+        </button>
+        <a href="/privacy" className="pl-1 text-[12px] text-[var(--ink-muted)] underline">
+          Privacy Policy
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="absolute left-4 bottom-4 z-10 flex items-center gap-3 rounded-[6px] border border-[var(--line)] bg-[var(--surface-raised)] px-4 py-2 text-sm">
+      <span className="text-[var(--ink-muted)]">{user.email}</span>
+      <button
+        type="button"
+        onClick={() => signOut()}
+        className="font-medium text-[var(--ink)] transition-transform active:scale-[0.98]"
+      >
+        Sign out
+      </button>
+      <button
+        type="button"
+        onClick={handleDeleteAccount}
+        disabled={deleting}
+        className="font-medium text-[var(--danger,#A23B2E)] transition-transform active:scale-[0.98] disabled:opacity-50"
+      >
+        {deleting ? "Deleting…" : "Delete account"}
+      </button>
+    </div>
+  );
+}
 
 export default function Home() {
   const { graph, loading } = useGraph();
@@ -112,6 +184,8 @@ export default function Home() {
           />
         </div>
       )}
+
+      <AuthCorner />
     </div>
   );
 }

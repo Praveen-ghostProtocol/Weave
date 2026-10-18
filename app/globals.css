@@ -4,6 +4,8 @@
   --surface: #f4f3f0;
   --ink: #211f1b;
   --ink-muted: #6b6a63;
+  --line: #dedcd5;
+  --accent: #3d5a45;
 }
 
 @theme inline {
@@ -16,10 +18,35 @@
     --surface: #1a1b17;
     --ink: #ECEAE3;
     --ink-muted: #9b9a8f;
+    --line: #34362e;
+    --accent: #74ae87;
   }
 }
 
 body {
   background: var(--surface);
   color: var(--ink);
+}
+
+/* DESIGN.md §7: visible --accent focus ring on every interactive element.
+   Global rather than per-component so new buttons/inputs/links get it free. */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Verified WCAG contrast pairs (relative-luminance math, not a tool) —
+   both clear AA's 4.5:1 for normal text; light-mode ink-muted is the
+   tightest margin, re-check it if these tokens ever change:
+   - --surface text on --accent bg (buttons): ~6.9:1 light, ~6.7:1 dark
+   - --ink-muted text on --surface bg (sub-copy): ~4.89:1 light, ~6.1:1 dark */
+
+/* DESIGN.md §4: canvas background — faint dot grid, --line at ~40% opacity,
+   24px spacing, so an empty canvas reads as unpopulated, not broken. */
+.dot-grid {
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--line) 40%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
 }

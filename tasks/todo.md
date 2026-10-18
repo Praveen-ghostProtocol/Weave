@@ -6,7 +6,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
 
 ## Phase 0: Scaffold
 
-- [ ] Task: Scaffold Next.js (App Router) + TypeScript + Tailwind app
+- [x] Task: Scaffold Next.js (App Router) + TypeScript + Tailwind app
   - Acceptance: `npx create-next-app` (TS, Tailwind, App Router, ESLint)
     produces a running app; default page replaced with a placeholder "Weave"
     page; project structure matches SPEC.md (`app/`, `components/`,
@@ -18,7 +18,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
     (note: Tailwind v4 config lives in `app/globals.css` via `@theme`, no
     `tailwind.config.ts` — ponytail call, nothing for that file to do)
 
-- [ ] Task: Add test tooling and core libraries
+- [x] Task: Add test tooling and core libraries
   - Acceptance: Vitest configured and runs an example passing test; Playwright
     installed and configured (browser installed); `dexie`, `reactflow`, and
     `@phosphor-icons/react` added as dependencies (per DESIGN.md's resolved
@@ -30,7 +30,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
 
 ## Phase 1: Data model & graph logic (foundation)
 
-- [ ] Task: Define core graph types
+- [x] Task: Define core graph types
   - Acceptance: `PersonaNode` (id, title, domain, markdown body, position),
     `PersonaEdge` (fromId, toId), and `PersonaGraph` (nodes, edges) types
     defined and exported; `DomainTag` typed per Open Question 2's resolution
@@ -40,7 +40,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Files: `lib/graph/types.ts`
   - Dependencies: Task 1
 
-- [ ] Task: Link and unlink pure functions
+- [x] Task: Link and unlink pure functions
   - Acceptance: `linkNodes(graph, fromId, toId)` adds an undirected, deduped
     edge (matches SPEC.md's own example); relinking an existing pair (either
     direction) is a no-op; `unlinkNodes(graph, fromId, toId)` removes the
@@ -52,7 +52,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
     `tests/linkNodes.test.ts`, `tests/unlinkNodes.test.ts`
   - Dependencies: Task 3
 
-- [ ] Task: Delete-node cascade
+- [x] Task: Delete-node cascade
   - Acceptance: `deleteNode(graph, nodeId)` removes the node and every edge
     referencing it (from either side); deleting a non-existent id is a no-op
     or throws (pick one, document in a comment).
@@ -61,7 +61,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Files: `lib/graph/deleteNode.ts`, `tests/deleteNode.test.ts`
   - Dependencies: Task 3
 
-- [ ] Task: Neighbor lookup and export formatting
+- [x] Task: Neighbor lookup and export formatting
   - Acceptance: `getNeighbors(graph, nodeId)` returns directly-linked nodes
     (one hop); `exportContext(graph, selectedIds)` returns a markdown string
     containing the full content of every selected node plus its one-hop
@@ -77,14 +77,14 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Dependencies: Task 3
 
 ### Checkpoint A — Foundation
-- [ ] `npm test` passes for all Phase 1 tests
-- [ ] `npm run build` succeeds
-- [ ] Review graph-logic correctness against Graph & Export Semantics in
+- [x] `npm test` passes for all Phase 1 tests
+- [x] `npm run build` succeeds
+- [x] Review graph-logic correctness against Graph & Export Semantics in
       SPEC.md before starting any UI work
 
 ## Phase 2: App shell & state
 
-- [ ] Task: App shell with shared graph state container
+- [x] Task: App shell with shared graph state container
   - Acceptance: A client-side hook/context (e.g. `useGraph`) loads the graph
     from Dexie on mount and exposes read access plus functions to add/update/
     delete nodes and link/unlink edges, persisting each change back to
@@ -99,7 +99,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
     `app/layout.tsx`, `app/page.tsx`
   - Dependencies: Task 3, Checkpoint A
 
-- [ ] Task: Empty-state UI
+- [x] Task: Empty-state UI
   - Acceptance: With zero nodes, the home page shows an empty-state message
     and a clear call-to-action to create the first node, instead of a blank
     or broken canvas.
@@ -110,7 +110,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
 
 ## Phase 3: UI components (parallelizable after Task 8)
 
-- [ ] Task: Node editor component
+- [x] Task: Node editor component
   - Acceptance: Form to create a node (title, domain tag per Open Question 2,
     markdown body) and edit an existing node; a delete action that calls the
     Task 6 cascade-delete through the shared state container; validation
@@ -120,7 +120,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Files: `components/NodeEditor.tsx`
   - Dependencies: Task 8
 
-- [ ] Task: Graph view rendering and layout persistence
+- [x] Task: Graph view rendering and layout persistence
   - Acceptance: react-flow canvas renders all nodes and edges from shared
     state; dragging a node updates its position in state and persists to
     IndexedDB (debounced, not on every pixel of drag); a focused node also
@@ -133,7 +133,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Files: `components/GraphView.tsx`
   - Dependencies: Task 8
 
-- [ ] Task: Link/unlink interaction in graph view
+- [x] Task: Link/unlink interaction in graph view
   - Acceptance: Per Open Question 3's resolution, user can create a link
     between two nodes from the graph view (calls `linkNodes` from Task 4
     through shared state) and remove an existing link (calls `unlinkNodes`);
@@ -144,7 +144,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Files: `components/GraphView.tsx`
   - Dependencies: Task 4, Task 11
 
-- [ ] Task: Export panel component
+- [x] Task: Export panel component
   - Acceptance: Per Open Question 4's resolution, user can select node(s) or
     "all"; export button calls `exportContext` from Task 6, shows the running
     character/token-estimate count as selection changes, copies the result
@@ -156,10 +156,10 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Dependencies: Task 6, Task 8
 
 ### Checkpoint B — Full loop
-- [ ] Fresh load → create two nodes → link them → both visible in graph view
+- [x] Fresh load → create two nodes → link them → both visible in graph view
       with persisted positions → select one → export includes both (one-hop)
       → export disabled at zero selection
-- [ ] `npm test` and `npm run build` both still pass
+- [x] `npm test` and `npm run build` both still pass
 
 ## Phase 4: Testing, polish, deploy
 

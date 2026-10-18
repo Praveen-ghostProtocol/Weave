@@ -102,6 +102,9 @@ test("create node, link two nodes, see them in graph view, export both", async (
   // Export context: select node A only — exportContext pulls in its
   // one-hop neighbor (node B) automatically, so this also exercises the
   // neighbor-inclusion rule from SPEC.md's Graph & Export Semantics.
+  // Export sidebar is a toggleable overlay now (DESIGN.md: never a
+  // permanent third column), so open it first.
+  await page.getByRole("button", { name: "Export", exact: true }).click();
   await page.locator("li", { hasText: "Launch Plan" }).locator('input[type="checkbox"]').check();
   await page.locator("button[data-state]").click();
 

@@ -1,9 +1,10 @@
 "use client";
 
 // Main app shell (DESIGN.md §4 "Shared layout rule"): canvas is the base
-// layer, full-bleed; the export sidebar is a persistent standing panel from
-// the left edge, the node editor is a panel from the right edge that only
-// mounts while a node is being created/edited. No third column, no modal.
+// layer, full-bleed; the export sidebar and the node editor are both
+// toggleable overlay panels from opposite edges, never a permanent third
+// column — DESIGN.md's rule explicitly, not just a narrow-viewport nicety.
+// On narrow viewports opening one closes the other, since both can't fit.
 import { useRef, useState } from "react";
 import { useGraph } from "@/lib/storage/useGraph";
 import EmptyState from "@/components/EmptyState";
@@ -19,7 +20,10 @@ export default function Home() {
   // "new" (both would otherwise be falsy) is why this isn't just
   // `string | null`.
   const [editorTarget, setEditorTarget] = useState<string | null | undefined>(undefined);
+  const [exportOpen, setExportOpen] = useState(false);
   const editorRef = useRef<NodeEditorHandle>(null);
+
+  const NARROW_VIEWPORT = 768; // DESIGN.md's "narrow viewports" breakpoint
 
   // Changing editorTarget changes NodeEditor's `key`, which remounts it —
   // bypassing its own Cancel button entirely. Without this check, clicking
@@ -29,7 +33,22 @@ export default function Home() {
     if (editorRef.current?.isDirty() && !window.confirm("Discard unsaved changes?")) {
       return;
     }
+    if (next !== undefined && window.innerWidth < NARROW_VIEWPORT) setExportOpen(false);
     setEditorTarget(next);
+  }
+
+  function toggleExport() {
+    if (
+      !exportOpen &&
+      editorTarget !== undefined &&
+      window.innerWidth < NARROW_VIEWPORT
+    ) {
+      if (editorRef.current?.isDirty() && !window.confirm("Discard unsaved changes?")) {
+        return;
+      }
+      setEditorTarget(undefined);
+    }
+    setExportOpen((open) => !open);
   }
 
   if (loading) {
@@ -67,9 +86,21 @@ export default function Home() {
         )}
       </main>
 
-      <div className="absolute left-4 top-4 bottom-4 z-10 flex">
-        <ExportPanel />
-      </div>
+      {/* z-30: above both overlay panels, so it's always reachable to close
+          the export panel — never covered the way "+ New node" was. */}
+      <button
+        type="button"
+        onClick={toggleExport}
+        className="absolute left-4 top-4 z-30 rounded-[6px] border border-[var(--line)] bg-[var(--surface-raised)] px-4 py-2 text-sm font-medium text-[var(--ink)] transition-transform active:scale-[0.98]"
+      >
+        {exportOpen ? "Close export" : "Export"}
+      </button>
+
+      {exportOpen && (
+        <div className="absolute left-0 top-0 z-20 h-full">
+          <ExportPanel />
+        </div>
+      )}
 
       {editorTarget !== undefined && (
         <div className="absolute right-0 top-0 z-20 h-full">

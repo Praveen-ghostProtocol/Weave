@@ -124,16 +124,16 @@ Deploy to Vercel
 4. **Export selection UX — resolved: checkbox list in a sidebar**, not
    canvas multi-select, for v0. Simpler to build and test; canvas
    multi-select can be added later if the checkbox list proves clunky.
-5. **Known gap, deferred, not silently skipped: narrow-viewport layout.**
-   DESIGN.md §4 calls for only one panel (export sidebar / node editor)
-   open at a time on narrow viewports; the current integration always
-   shows the export sidebar and the node editor itself is a fixed 420px
-   panel with zero responsive handling (overflows a ~375-414px viewport
-   outright). SPEC.md's Success Criteria don't mention mobile, so this
-   isn't blocking Checkpoint B/C, but it's a real DESIGN.md compliance
-   gap, not a hypothetical — needs its own small task before calling v0
-   polished: responsive widths on NodeEditor/ExportPanel plus hiding the
-   export sidebar while the editor is open on narrow screens.
+5. **Narrow-viewport layout — partially fixed.** product-manager's final
+   design review caught that the export sidebar was a *permanent* standing
+   column, which violates DESIGN.md §4's "never a third column that
+   permanently shrinks the canvas" outright (not just a narrow-viewport
+   nicety). Fixed: export sidebar is now a toggleable overlay panel like
+   the node editor, and opening one force-closes the other below a 768px
+   viewport. Remaining, still deferred and tracked: NodeEditor (420px) and
+   ExportPanel (320px) are both fixed-width with no responsive sizing, so
+   either can still overflow a ~375-414px phone viewport on its own. Not
+   blocking Checkpoint C (SPEC.md's Success Criteria don't cover mobile).
 6. **Known gap, deferred: e2e test is dev-mode + Chromium-only.**
    `critical-path.spec.ts` runs against `npm run dev` (Turbopack dev
    server, not a production build) and only Chromium (no `projects` array

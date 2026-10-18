@@ -69,6 +69,11 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
     return Array.from(set).sort();
   }, [graph.nodes]);
 
+  // Gates the "Title is required" message so it doesn't scold the user the
+  // instant a blank new-node form opens, before they've touched anything —
+  // shown once they've left the field or tried to save, not on mount.
+  const [titleTouched, setTitleTouched] = useState(false);
+
   const canSave = title.trim().length > 0;
   const isDirty =
     title !== (existing?.title ?? "") ||
@@ -79,7 +84,10 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!canSave) return;
+    if (!canSave) {
+      setTitleTouched(true);
+      return;
+    }
     const payload = { title: title.trim(), domain: domain.trim(), body };
     if (nodeId) {
       updateNode(nodeId, payload);
@@ -136,9 +144,10 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => setTitleTouched(true)}
           className="rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2 text-[14px] font-semibold text-[var(--ink)]"
         />
-        {!canSave && (
+        {titleTouched && !canSave && (
           <p className="text-sm text-[var(--danger,#A23B2E)]">Title is required.</p>
         )}
       </div>

@@ -118,6 +118,12 @@ Deploy to Vercel
 2. **Domain tag — resolved: free-form string.** Node editor offers
    autocomplete from previously-used tags (not a closed dropdown). Lower
    risk, matches the spec's own loosely-defined examples.
+3. **Link-creation interaction — resolved: react-flow native drag-from-handle.**
+   Least code (library default), matches how graph UIs conventionally work;
+   no separate "Link" button needed.
+4. **Export selection UX — resolved: checkbox list in a sidebar**, not
+   canvas multi-select, for v0. Simpler to build and test; canvas
+   multi-select can be added later if the checkbox list proves clunky.
 5. **Known gap, deferred, not silently skipped: narrow-viewport layout.**
    DESIGN.md §4 calls for only one panel (export sidebar / node editor)
    open at a time on narrow viewports; the current integration always
@@ -128,11 +134,12 @@ Deploy to Vercel
    gap, not a hypothetical — needs its own small task before calling v0
    polished: responsive widths on NodeEditor/ExportPanel plus hiding the
    export sidebar while the editor is open on narrow screens.
-3. **Link-creation interaction — resolved: react-flow native drag-from-handle.**
-   Least code (library default), matches how graph UIs conventionally work;
-   no separate "Link" button needed.
-4. **Export selection UX — resolved: checkbox list in a sidebar**, not
-   canvas multi-select, for v0. Simpler to build and test; canvas
-   multi-select can be added later if the checkbox list proves clunky.
+6. **Known gap, deferred: e2e test is dev-mode + Chromium-only.**
+   `critical-path.spec.ts` runs against `npm run dev` (Turbopack dev
+   server, not a production build) and only Chromium (no `projects` array
+   for Firefox/WebKit). Red-team flagged this as a truth-in-labeling gap,
+   not an active flake risk — the "critical path passes" claim is narrower
+   than it sounds. Not blocking Checkpoint C; worth broadening once v0 has
+   real usage to justify the CI time.
 
 Only #1 is still genuinely open and doesn't block any task.

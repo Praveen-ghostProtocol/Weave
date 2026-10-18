@@ -163,7 +163,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
 
 ## Phase 4: Testing, polish, deploy
 
-- [ ] Task: Playwright critical-path e2e test
+- [x] Task: Playwright critical-path e2e test
   - Acceptance: Automates: create node → link two nodes → see them in graph
     view → export context → assert exported text contains both nodes'
     content. Matches the Testing Strategy's one required e2e path.

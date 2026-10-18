@@ -101,19 +101,19 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
   action (e.g. the export is copy-to-clipboard, not auto-upload).
 
 ## Success Criteria
-- [ ] User can open the app with zero setup and create a persona node (title,
+- [x] User can open the app with zero setup and create a persona node (title,
       domain tag, markdown body) — works correctly on a fresh/empty graph.
-- [ ] User can link two nodes; link is visible from both sides; relinking the
+- [x] User can link two nodes; link is visible from both sides; relinking the
       same pair is a no-op.
-- [ ] Deleting a node removes its edges with it.
-- [ ] Graph view renders nodes + edges (manual layout, positions persist),
+- [x] Deleting a node removes its edges with it.
+- [x] Graph view renders nodes + edges (manual layout, positions persist),
       clicking a node opens it.
-- [ ] User can select nodes (or "all") and export a combined markdown context
+- [x] User can select nodes (or "all") and export a combined markdown context
       block that includes directly-linked neighbors of selected nodes.
-- [ ] Export is disabled when selection is empty.
+- [x] Export is disabled when selection is empty.
 - [ ] Deployed, reachable via a public URL, works for a first-time visitor
       with zero existing data (empty state doesn't break).
-- [ ] UI reviewed by product-manager against `DESIGN.md` and doesn't read as
+- [x] UI reviewed by product-manager against `DESIGN.md` and doesn't read as
       generic/templated AI output (default bento grids, stock gradients,
       centered-hero-two-buttons, etc.).
 

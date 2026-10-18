@@ -172,7 +172,7 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Files: `e2e/critical-path.spec.ts`
   - Dependencies: Checkpoint B
 
-- [ ] Task: Fresh-visitor / empty-state QA pass
+- [x] Task: Fresh-visitor / empty-state QA pass
   - Acceptance: Every Success Criteria checkbox in SPEC.md verified by hand
     against a cleared-storage browser profile; any bug found is fixed in its
     owning file (no new files expected; if one is needed, it belongs to

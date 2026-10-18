@@ -94,8 +94,9 @@ should be answered before Tasks 10, 12, and 13 respectively.
   - Verify: `npm run build` succeeds; manual check — open app in browser,
     create a node via a temporary debug call (or minimal inline form),
     reload the page, confirm the node persisted.
-  - Files: `lib/storage/db.ts`, `lib/storage/useGraph.ts`, `app/layout.tsx`,
-    `app/page.tsx`
+  - Files: `lib/storage/db.ts`, `lib/storage/useGraph.tsx` (JSX Provider,
+    not `.ts` — React Compiler's ref-safety lint rule flags `createElement`),
+    `app/layout.tsx`, `app/page.tsx`
   - Dependencies: Task 3, Checkpoint A
 
 - [ ] Task: Empty-state UI

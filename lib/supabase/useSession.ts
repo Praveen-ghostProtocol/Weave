@@ -42,9 +42,19 @@ export function useSession() {
     });
   }
 
+  // Magic-link / OTP email sign-in (no password). Lands on /app via
+  // app/auth/confirm/route.ts, not the OAuth /auth/callback route — see
+  // that file's comment for why email confirmation needs its own handler.
+  function signInWithMagicLink(email: string) {
+    return createClient().auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/app` },
+    });
+  }
+
   function signOut() {
     return createClient().auth.signOut();
   }
 
-  return { user, loading, signInWithGoogle, signOut };
+  return { user, loading, signInWithGoogle, signInWithMagicLink, signOut };
 }

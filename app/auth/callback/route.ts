@@ -1,15 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { resolveSiteOrigin } from "@/lib/supabase/siteOrigin";
 
 // OAuth callback for Supabase's PKCE flow (Google sign-in): Supabase
 // redirects here with ?code=..., which we trade for a session cookie via
-// exchangeCodeForSession. Supabase's own docs example redirects using the
-// request's `x-forwarded-host` header with no allowlist — red-team caught
-// that this is an open-redirect primitive if that header is ever
-// attacker-controlled through Vercel's edge (a known footgun with this
-// exact pattern). Weave has one fixed production domain, so there's no
-// need to trust any header at all: redirect to a server-configured origin
-// instead, falling back to the request's own origin only in local dev.
+// exchangeCodeForSession. See lib/supabase/siteOrigin.ts for why the
+// redirect target is a server-configured origin, never a request header.
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
@@ -18,17 +14,7 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      // In production, redirect only to the server-configured site origin —
-      // never a request header. In dev there's no NEXT_PUBLIC_SITE_URL and
-      // no meaningful spoofing surface (it's your own localhost), so the
-      // request's own origin is fine there.
-      if (process.env.NODE_ENV === "development") {
-        return NextResponse.redirect(`${origin}/`);
-      }
-      if (!process.env.NEXT_PUBLIC_SITE_URL) {
-        throw new Error("NEXT_PUBLIC_SITE_URL must be set in production");
-      }
-      return NextResponse.redirect(`${process.env.NEXT_PUBLIC_SITE_URL}/`);
+      return NextResponse.redirect(`${resolveSiteOrigin(origin)}/app`);
     }
   }
 

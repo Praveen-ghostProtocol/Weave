@@ -55,7 +55,7 @@ async function prepPage(page: Page) {
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/app");
 }
 
 test("create node, link two nodes, see them in graph view, export both", async ({ page }) => {
@@ -106,7 +106,11 @@ test("create node, link two nodes, see them in graph view, export both", async (
   // permanent third column), so open it first.
   await page.getByRole("button", { name: "Export", exact: true }).click();
   await page.locator("li", { hasText: "Launch Plan" }).locator('input[type="checkbox"]').check();
-  await page.locator("button[data-state]").click();
+  // Named selector, not `button[data-state]` — AI draft assist's "Draft
+  // with AI" button also carries data-state, so the generic selector
+  // became ambiguous once that feature shipped (caught here, not before,
+  // since this is the first e2e run since that feature landed).
+  await page.getByRole("button", { name: "Export selection" }).click();
 
   const copiedText = await page.evaluate(
     () => (window as unknown as { __copiedText?: string }).__copiedText,

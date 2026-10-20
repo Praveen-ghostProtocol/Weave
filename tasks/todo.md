@@ -459,13 +459,17 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
     the ledger. Covers SPEC.md Slice 1 criterion 8.
   - Dependencies: live AI draft happy-path verification
 
-- [ ] Task: Fix the privacy policy's placeholder contact address
+- [x] Task: Fix the privacy policy's placeholder contact address
   - Why: found during the 2026-10-20 verification pass. The Contact
     section reads `your-email@example.com`. The policy is otherwise
     accurate and does name OpenAI as a processor, but a public privacy
     policy cannot ship with a fake contact address — it is the one piece
     of the document a user is told to act on.
   - Acceptance: a real monitored address replaces the placeholder.
+    DONE 2026-10-20. Founder supplied the address; the two TODO comments
+    went with it and `LAST_UPDATED` moved to 2026-10-20 since the document
+    changed. Verified in the browser: it renders as a `mailto:` link and
+    no `example.com` string remains anywhere in app code.
   - Files: `app/privacy/page.tsx`
   - Dependencies: none; blocks public launch, not Checkpoint E's other items
 
@@ -489,10 +493,12 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
   - Dependencies: live auth verification
 
 ### Checkpoint E — Slice 1 ship
-- [~] Slice 1 Success Criteria: 8 of 10 fully verified 2026-10-20, 2
-      partly — quota concurrency is unit-tested rather than live-raced,
-      and the privacy policy carries a placeholder contact address
-      (its own task above, blocks public launch)
+- [~] Slice 1 Success Criteria: 9 of 10 fully verified 2026-10-20. The
+      one remaining gap is criterion 5's concurrency half, which is
+      covered by a unit test asserting reserve precedes any cap read
+      rather than by a staged live race. Decide: stage the race, or
+      reword the criterion to what is actually proven. Leaving it
+      ambiguous is the one unacceptable option.
 - [ ] `npm test`, `npm run lint` and `npm run build` pass
 - [x] Quota race closed and covered by a test
 - [x] Per-user cap numbers ratified in SPEC.md and matching the code

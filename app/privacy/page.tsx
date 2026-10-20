@@ -1,10 +1,13 @@
 // Plain, honest disclosure of actual data practices — not legal advice.
-// Fill in the two placeholders below (contact email, last-updated date)
-// before this goes live. Consider real legal review before meaningful
-// traffic; this is a reasonable baseline for a small launch, not a
-// substitute for one.
-const CONTACT_EMAIL = "your-email@example.com"; // TODO: replace before launch
-const LAST_UPDATED = "2026-10-18"; // TODO: keep current
+// Consider real legal review before meaningful traffic; this is a
+// reasonable baseline for a small launch, not a substitute for one.
+//
+// CONTACT_EMAIL is the one line here a user is told to act on, so it must
+// be a real monitored address — a placeholder shipped publicly is worse
+// than no contact section at all. Bump LAST_UPDATED whenever the wording
+// below changes in substance.
+const CONTACT_EMAIL = "s4spraveen.2005@gmail.com";
+const LAST_UPDATED = "2026-10-20";
 
 export default function PrivacyPage() {
   return (

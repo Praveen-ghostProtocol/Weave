@@ -299,9 +299,10 @@ below; `[~]` means partly verified, with the gap named.
   `on delete cascade` fires for real, it isn't just declared in the
   migration. The founder's own account and its three rows were untouched,
   confirmed by querying both before and after.
-- `[~]` Privacy policy: live, reachable, and names OpenAI as a processor.
-  **Defect: the Contact section still reads `your-email@example.com`.** A
-  public privacy policy must not ship with a placeholder address.
+- Privacy policy: live, reachable, and names OpenAI as a processor. The
+  placeholder contact address found during this pass was replaced with a
+  real one and re-verified in the browser on 2026-10-20; the last-updated
+  date moved with it.
 - [x] A visitor can sign in with Google; a session persists across reload;
       sign-out works.
 - [x] Guest mode still works exactly like v0 today — full local graph app,
@@ -319,7 +320,7 @@ below; `[~]` means partly verified, with the gap named.
       Postgres table — verified by reading actual logs after a real
       "Draft with AI" call, not just by code inspection.
 - [x] Account deletion removes the user's account/session/usage rows.
-- [~] A privacy policy naming OpenAI as a processor is live before the
+- [x] A privacy policy naming OpenAI as a processor is live before the
       Supabase sign-in button is.
 
 ## Open Questions

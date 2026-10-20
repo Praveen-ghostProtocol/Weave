@@ -42,15 +42,18 @@ $20/month hard global OpenAI spend cap with a kill switch, and the BYOK
 Anthropic feature (below) is retired once this ships — one provider, one
 proxy, one error model, not two parallel AI paths in a public product.
 
-**Addendum — AI draft assist (v0, being retired by Slice 1).** The raw
-export (concatenated node content) is the default and still works with zero
-setup — this does not change. v0 additionally let a user supply their own
-Anthropic API key (stored in their browser only) and have Weave call Claude
-directly. **This BYOK path is retired once `llm-proxy` ships** (confirmed by
-the founder) — replaced by the server-side OpenAI proxy, available to
-signed-in users without needing their own key. Kept below for the historical
-record and because it's still live until the replacement ships; do not build
-new features on top of it.
+**Addendum — AI draft assist. BYOK RETIRED 2026-10-20, historical record
+only.** The raw export (concatenated node content) is the default and still
+works with zero setup — this has never changed and still holds. v0
+additionally let a user supply their own Anthropic API key (stored in their
+browser only) and have Weave call Claude directly. **That path is now
+gone**: `lib/llm/anthropic.ts`, `lib/storage/apiKey.ts`, the key input, the
+Save/Clear buttons and the `Key` icon were all deleted when `llm-proxy`'s
+`draft-brief` endpoint shipped. "Draft with AI" now POSTs to
+`/api/ai/draft-brief` and is available to signed-in users with no key of
+their own. Nothing below describes live behaviour; it is kept to explain
+why the code looks the way it does. Do not build on it, and do not
+reintroduce a user-supplied key.
 
 **Known, accepted tradeoff of the v0 BYOK architecture** (not a bug, flagged
 by red-team review, resolved by retiring BYOK): because the browser called
@@ -67,9 +70,10 @@ the public version, where `llm-proxy` keeps the real key server-side only.
   no force-directed physics — expected node count per user is small, tens not
   hundreds, so auto-layout is overkill)
 - Deployed on Vercel as a static app (no DB, no server cost)
-- AI draft assist (v0, being retired): direct `fetch` to Anthropic's
-  Messages API from the browser. User's API key stored in `localStorage`
-  only, read at call time, never bundled/committed/logged.
+- ~~AI draft assist (v0): direct `fetch` to Anthropic's Messages API from
+  the browser, user's API key in `localStorage`.~~ **Retired 2026-10-20** —
+  deleted outright, replaced by `llm-proxy` below. No Anthropic dependency
+  and no user-supplied key remains anywhere in the app.
 - **Slice 1 (v1 public launch)**:
   - Supabase: Postgres + auth (Google OAuth at launch — no passwords, no
     reset flow, no credential-stuffing surface) + row-level security for
@@ -79,16 +83,42 @@ the public version, where `llm-proxy` keeps the real key server-side only.
   - Next.js Route Handlers (the app stops being a pure static export;
     deployed on Vercel Pro — commercial use isn't covered by Hobby).
   - `llm-proxy`: server-side OpenAI calls only, via fixed task endpoints
-    (the client never sends a free-form prompt) — `gpt-5.4-nano` for
-    structured/cheap tasks, `gpt-5.4-mini` for prose, no `gpt-5.4`
-    (flagship) tier until `billing` exists. Lowest reasoning effort each
-    model accepts, hard `max_output_tokens` cap, prompts ordered for
-    OpenAI's automatic prompt-prefix caching.
+    (the client never sends a free-form prompt). **`gpt-5.4-nano` is the
+    default for every task, including prose**, and `gpt-5.4-mini` is the
+    escape hatch for a specific task whose output quality proves too weak
+    on nano — not the starting point for prose. No `gpt-5.4` (flagship)
+    tier until `billing` exists. Lowest reasoning effort each model
+    accepts, hard `max_output_tokens` cap, prompts ordered for OpenAI's
+    automatic prompt-prefix caching.
+
+    *This reverses an earlier nano-for-structured / mini-for-prose split
+    (founder's call, 2026-10-20): running cost matters more at launch than
+    prose polish, and the per-task model is one exported constant, so
+    moving a task up to mini is a one-line change if its output disappoints.
+    `draft-brief` runs on nano. If you are reading this and tempted to
+    "fix" it back to mini, that is the decision, not an oversight. The
+    model constant and its two price constants in `lib/llm/openai.ts` must
+    always change together — `lib/llm/budget.ts` reserves and settles
+    against those prices, so a model swap without a price swap silently
+    mis-bills the ledger and every cap derived from it.*
   - Spend controls (defense in depth, see tasks/plan.md for the full list):
     OpenAI prepaid credits with auto-recharge off (the real hard stop),
     $20/month app-level global cap with a kill switch, per-user daily/
     monthly dollar quotas via reserve-then-settle (not just request
     counts), `safety_identifier` on every OpenAI call.
+  - **Per-user quotas, ratified by the founder 2026-10-20: $0.05/day and
+    $0.25/month.** These are the numbers the code implements, not a
+    placeholder it invented. At nano pricing a worst-case call costs about
+    $0.0043 (15k input capped + 1024 max output), so the daily cap is
+    roughly 11 calls and the monthly cap roughly 58. Changing either is an
+    "Ask first" item below; change them here and in
+    `app/api/ai/draft-brief/route.ts` together, never one alone.
+  - **Quota enforcement is reserve-first, then check.** The cap comparison
+    reads totals that already include the request's own reservation.
+    Checking the caps before inserting the reservation leaves a
+    read-then-write gap that concurrent requests pass through together,
+    which would break the "can't together exceed their quota" criterion
+    below. Under contention this over-rejects rather than overspends.
 - **Deferred past Slice 1** (capability map in tasks/plan.md): `sub-nodes`,
   `ai-node-drafting`, `ai-export-selection`, `ai-structure-suggestions`,
   `graph-indexing`, `billing`, `cloud-sync` (this is where the real privacy/
@@ -150,13 +180,15 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
 - **Export with zero nodes selected**: export action is disabled, not an
   error state.
 - **AI draft assist**: a separate, clearly-labeled action from the raw
-  export (never silently replaces it — raw export must keep working with no
-  API key set). Sends the same node content that raw export would produce
-  (selected nodes + one-hop neighbors) to Anthropic's API, asks it to write
-  a concise first-person context brief, and shows the result for the user to
-  copy — Weave never auto-pastes or auto-sends it anywhere else. A missing
-  or invalid key shows a clear inline error, not a silent failure; an API
-  error (rate limit, network) does the same.
+  export (never silently replaces it — raw export must keep working with
+  no account at all). POSTs the same node content that raw export would
+  produce (selected nodes + one-hop neighbors) to `/api/ai/draft-brief`,
+  which builds the prompt server-side and asks OpenAI for a concise
+  first-person context brief, then shows the result for the user to copy —
+  Weave never auto-pastes or auto-sends it anywhere else. Signed out, the
+  action fires no request and prompts for sign-in. Any failure (quota
+  spent, global cap reached, kill switch, upstream error) shows a clear
+  inline message, never a silent failure or an unhandled rejection.
 
 ## Boundaries
 - **Always**: run `npm test` before marking a task done, never commit
@@ -204,38 +236,90 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
       generic/templated AI output (default bento grids, stock gradients,
       centered-hero-two-buttons, etc.).
 
-### AI draft assist (addendum)
-- [x] User can enter an Anthropic API key in a settings affordance; it's
-      stored in `localStorage` only and persists across reloads.
-- [x] Raw export (copy-to-clipboard) still works with zero setup, no key
-      required — AI draft assist is additive, never a replacement.
-- [x] With a key set, "Draft with AI" sends the current selection (same
-      content raw export would use) to Anthropic and shows a synthesized
-      first-person brief instead of raw concatenation.
-- [x] No key set: "Draft with AI" shows a clear inline prompt to add one,
-      not a silent no-op or a crash.
-- [x] An API error (bad key, rate limit, network failure) shows a clear
-      inline error, not a silent failure or an unhandled rejection.
+### AI draft assist (addendum) — superseded 2026-10-20
+These were met by the v0 BYOK build and are kept for the record. The key
+affordance they describe no longer exists; the Slice 1 criteria below are
+the live ones. Struck where the retirement made them meaningless, restated
+where the behaviour survived the move to the proxy.
+
+- ~~User can enter an Anthropic API key in a settings affordance; it's
+  stored in `localStorage` only and persists across reloads.~~ Retired —
+  no key affordance exists; signed-in session replaces it.
+- [x] **Still live, still required.** Raw export (copy-to-clipboard) works
+      with zero setup and no account — AI draft assist is additive, never
+      a replacement.
+- ~~With a key set, "Draft with AI" sends the current selection to
+  Anthropic...~~ Restated as Slice 1 criterion 3 below, against the
+  server-side OpenAI proxy.
+- ~~No key set: "Draft with AI" shows a clear inline prompt to add one.~~
+  Restated: signed out (or on a lapsed session), "Draft with AI" fires no
+  request and shows an inline sign-in prompt, keeping its normal styling —
+  a discoverable state, not a failure. Verified 2026-10-20.
+- [x] **Still live, still required.** An API failure shows a clear inline
+      error, not a silent failure or an unhandled rejection. The wording
+      now comes from the route, which is the side that knows whether it
+      was a quota, the global cap, the kill switch, or an upstream fault.
 
 ### Slice 1 — Public launch (platform-backend + auth + llm-proxy)
-- [ ] A visitor can sign in with Google; a session persists across reload;
+
+**Verification pass run 2026-10-20 against a live signed-in session, a real
+Supabase project and real OpenAI calls.** Total spend: $0.000195. Evidence
+below; `[~]` means partly verified, with the gap named.
+
+- Sign-in, persistence, sign-out: session survived two full dev-server
+  restarts and several reloads; sign-out returned the app to guest state.
+- Guest mode: after sign-out the local graph, the checkbox list and raw
+  export all still worked, and "Draft with AI" fired no request at all.
+- Draft without a key: returned a genuine first-person brief on
+  `gpt-5.4-nano`, with no key present anywhere in the browser.
+- Per-call cost: the settled row was $0.000195 (135 in / 134 out) against a
+  reservation ceiling of $0.001293 — actual cost matched the price
+  constants to the microdollar.
+- `[~]` Quota: the daily cap rejection was verified live (429, correct
+  message, and the reservation fully refunded so billable spend did not
+  move). The *concurrency* half of this criterion is covered by a unit test
+  asserting that `reserve` is invoked before any cap read, not by firing
+  genuinely simultaneous live requests. The mechanism is proven; a live
+  race was not staged.
+- Global cap: 503 with the right message, and "Export selection" stayed
+  enabled throughout.
+- Kill switch: 503 in 311ms with 90ms of application code — no OpenAI call
+  and no ledger row written, so it short-circuits before anything can
+  spend.
+- Content leak: the usage log line carries only (user, task, model, tokens,
+  cost, timestamp). Grepping the full server log for three distinctive
+  phrases from the node body returned nothing, and `usage_ledger` has no
+  content column.
+- Account deletion: verified 2026-10-20 on a purpose-made test account
+  rather than the founder's own, so the pass's evidence survived. A test
+  user was created via the admin API, given a seeded `usage_ledger` row,
+  and signed in through the app's real `/auth/confirm` magic-link route.
+  Clicking "Delete account" returned 200, dropped the app back to guest
+  state, removed the auth user, and took the ledger row with it — the
+  `on delete cascade` fires for real, it isn't just declared in the
+  migration. The founder's own account and its three rows were untouched,
+  confirmed by querying both before and after.
+- `[~]` Privacy policy: live, reachable, and names OpenAI as a processor.
+  **Defect: the Contact section still reads `your-email@example.com`.** A
+  public privacy policy must not ship with a placeholder address.
+- [x] A visitor can sign in with Google; a session persists across reload;
       sign-out works.
-- [ ] Guest mode still works exactly like v0 today — full local graph app,
+- [x] Guest mode still works exactly like v0 today — full local graph app,
       raw export, zero setup, no AI — for anyone not signed in.
-- [ ] Signed-in user can use "Draft with AI" without supplying any API
+- [x] Signed-in user can use "Draft with AI" without supplying any API
       key — it calls the server-side proxy using the founder's OpenAI key.
-- [ ] A single OpenAI call never costs the founder more than the per-call
+- [x] A single OpenAI call never costs the founder more than the per-call
       cap (input + max_output_tokens bounded, lowest reasoning effort).
-- [ ] Per-user daily/monthly quota is enforced via reserve-then-settle —
+- [~] Per-user daily/monthly quota is enforced via reserve-then-settle —
       concurrent requests from one user can't together exceed their quota.
-- [ ] Hitting the $20/month global cap disables AI for everyone (not a
+- [x] Hitting the $20/month global cap disables AI for everyone (not a
       crash) and raw export keeps working regardless.
-- [ ] The kill-switch env var disables all AI calls immediately when set.
-- [ ] No persona node content appears in any server log, error report, or
+- [x] The kill-switch env var disables all AI calls immediately when set.
+- [x] No persona node content appears in any server log, error report, or
       Postgres table — verified by reading actual logs after a real
       "Draft with AI" call, not just by code inspection.
-- [ ] Account deletion removes the user's account/session/usage rows.
-- [ ] A privacy policy naming OpenAI as a processor is live before the
+- [x] Account deletion removes the user's account/session/usage rows.
+- [~] A privacy policy naming OpenAI as a processor is live before the
       Supabase sign-in button is.
 
 ## Open Questions

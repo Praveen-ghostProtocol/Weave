@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Mocked consistently with tests/anthropic.test.ts's style (mock the thing
-// crossing a real boundary — there, fetch; here, the Supabase admin client
+// Mocks the thing crossing a real boundary, the house style across these
+// tests (in tests/openai.test.ts, fetch; here, the Supabase admin client
 // — rather than hitting the real DB, since usage_ledger's FK to auth.users
 // means a fake user_id can't be inserted for real without a real signed-up
 // user on hand).

@@ -105,17 +105,13 @@ different visual language. No message bubbles, no avatar, no "AI is
 typing" animation — this is a second button and a text result, not a chat
 product.
 
-- **API key — a settings affordance, not a form field in the main flow.**
-  A small icon-only button (Phosphor `Key`, 16px, ghost — no border at
-  rest) sits in the sticky header next to "Select all / Select none". Its
-  tint *is* the key-status indicator: `--ink-muted` when no key is stored,
-  `--accent` when one is. Click expands an inline row directly below the
-  header (pushes the checkbox list down, nothing floats over the canvas):
-  a labeled `type="password"` input ("Anthropic API key"), a "Save" button,
-  and a "Clear" text link. Helper text below the input, 12px `--ink-muted`:
-  "Stored only in this browser. Used only to call Anthropic directly." Save
-  collapses the row back to the icon. This is the only place the key is
-  ever shown or edited — never surfaced in the export flow itself.
+- **No settings affordance. Nothing to configure.** *(Replaces the v0
+  "API key" bullet, removed 2026-10-20 with the BYOK retirement.)* Drafting
+  runs server-side for signed-in users, so there is no key, no
+  `type="password"` input, no Save/Clear pair, and no `Key` icon in the
+  sticky header. The header is back to just "Select all / Select none".
+  Do not reintroduce a key field — the whole point of moving the call
+  server-side was that the user never handles a credential.
 - **The action pair.** The footer below the checkbox list now holds two
   stacked, full-width, same-height buttons, 8px gap: "Export selection"
   (unchanged — filled `--accent`, primary) above "Draft with AI" (secondary
@@ -125,10 +121,16 @@ product.
   grammar, and it reuses tokens the disabled state already established
   (muted border+text = inert, full-contrast border+text = enabled-but-
   secondary) — no new color, no new radius.
-- **No key set.** "Draft with AI" stays enabled-looking (not greyed — this
-  isn't a broken state, it's a discoverable one). Clicking it with no key
-  stored expands the settings row above (per above) and focuses the input,
-  instead of firing a request. No silent no-op, no crash.
+- **Signed out.** *(Replaces the v0 "No key set" bullet; same rule, new
+  trigger.)* "Draft with AI" stays enabled-looking (not greyed — this
+  isn't a broken state, it's a discoverable one). Clicking it while signed
+  out fires no request and reveals one line of 12px `--ink-muted` text
+  below the footer: a `--accent` "Sign in" link, then "to draft with AI.
+  Export selection works without an account." The button keeps its normal
+  label and border, never the `--danger` error treatment — not being
+  signed in isn't a failure. A session that lapses mid-visit (the route
+  answers 401) lands in this same state, not in an error. No silent no-op,
+  no crash.
 - **Loading.** Button label swaps to "Drafting…", button disabled for the
   duration. No spinner glyph, no shimmer — matches the existing
   "Export selection" → "Copied" label-swap pattern already in this sidebar.
@@ -136,8 +138,12 @@ product.
 - **Error.** Button label swaps to "Draft failed — try again",
   `--danger`-tinted border (same `data-state="error"` pattern the export
   button already uses), plus one inline line of actual error text below the
-  footer (bad key vs. rate limit vs. network — whichever it was, not a
-  generic "something went wrong").
+  footer naming which failure it was — quota spent for today, quota spent
+  for this month, AI paused because the global cap is reached, the kill
+  switch, or an upstream fault — not a generic "something went wrong".
+  That wording comes from the route, which is the side that knows the
+  reason; the panel renders it rather than re-deriving a message from the
+  status code.
 - **Result.** On success, a result block appears *above* the footer
   buttons (between the checkbox list and the action pair, inside the same
   panel — not a new overlay, not a modal): a small "AI draft" label, a
@@ -194,14 +200,14 @@ transform transition. Animate `transform`/`opacity` only.
   `--surface` and `--surface-raised` in both modes — verify this once real
   Tailwind tokens are set, the hexes above were picked for it but weren't
   run through a checker.
-- API key input is `type="password"` (no plaintext key visible over a
-  shoulder) but has a visible label, not placeholder-as-label, same as
-  every other field. The key-status icon's color difference is not the
-  only signal — it also needs a text equivalent (`aria-label`/`title`:
-  "API key set" / "No API key set") since color alone isn't an accessible
-  state indicator. A draft error is announced (e.g. `role="alert"` or
-  `aria-live="polite"` on the inline error line), not just visually swapped
-  in, so it isn't silent for screen-reader users either.
+- A draft error is announced (`role="alert"` with `aria-live="polite"` on
+  the inline error line), not just visually swapped in, so it isn't silent
+  for screen-reader users. The signed-out prompt is announced the same way
+  via `role="status"` — it's information, not an error, so it shouldn't
+  interrupt the way an alert does.
+  *(The v0 note here covered the API key input's `type="password"` and the
+  key-status icon's text equivalent. Both were removed 2026-10-20 with the
+  BYOK retirement — there is no key field and no status icon any more.)*
 
 ## 8. Explicit avoid list
 

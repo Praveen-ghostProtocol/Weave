@@ -346,7 +346,7 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
     `tests/draftBrief.route.test.ts`, `vitest.config.mts`
   - Dependencies: none
 
-- [ ] Task: Ratify the per-user cap numbers
+- [x] Task: Ratify the per-user cap numbers
   - Why: `DAILY_USER_CAP_USD` at $0.05 and `MONTHLY_USER_CAP_USD` at $0.25
     are hardcoded in the route and appear in neither SPEC.md nor plan.md.
     plan.md commits to "per-user daily/monthly dollar quotas" without
@@ -360,6 +360,9 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
     $1.25/M), down from about $0.016 on mini. So $0.05/day is roughly 11
     calls and $0.25/month is roughly 58 — decide against those numbers, not
     the old ones.
+    DONE — 2026-10-20. Founder kept both numbers as they stand. Written
+    into SPEC.md's Slice 1 spend-controls block, alongside a note that the
+    two constants and the spec must change together.
   - Verify: the two constants in the route match the two numbers in
     SPEC.md.
   - Files: `SPEC.md`, `app/api/ai/draft-brief/route.ts`
@@ -378,7 +381,7 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
     deliberate swap stops reading as a test failure. DONE — 2026-10-20.
   - Files: `lib/llm/openai.ts`, `tests/openai.test.ts`
 
-- [ ] Task: Amend SPEC.md's model-routing rule to match the nano switch
+- [x] Task: Amend SPEC.md's model-routing rule to match the nano switch
   - Why: SPEC.md's Tech Stack says "`gpt-5.4-nano` for structured/cheap
     tasks, `gpt-5.4-mini` for prose." `draft-brief` writes prose and now
     runs on nano, so the code and the spec disagree. One of them has to
@@ -387,11 +390,14 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
     escape hatch if brief quality proves too weak; the reasoning is
     recorded so a later reader doesn't "fix" it back to mini.
   - Verify: no routing rule in SPEC.md contradicts `MODEL`.
+    DONE — 2026-10-20. Tech Stack now reads nano-first for every task
+    including prose, with mini as the per-task escape hatch, and says
+    outright that this is the decision rather than an oversight.
   - Files: `SPEC.md`
   - Dependencies: none, but pairs with the quality judgement in the live
     AI draft happy-path verification below
 
-- [ ] Task: Retire BYOK from the written record
+- [x] Task: Retire BYOK from the written record
   - Acceptance: SPEC.md's "AI draft assist (addendum)" no longer describes
     the Anthropic key path as live — it currently says "still live until
     the replacement ships," and the replacement has now shipped. Its five
@@ -401,12 +407,18 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
     the signed-out case. The Tech Stack BYOK line is marked retired.
   - Verify: no doc describes a UI element that no longer exists; grepping
     for "Anthropic API key" returns nothing outside historical-record prose.
+    DONE — 2026-10-20. SPEC.md's addendum is marked retired and its five
+    criteria struck or restated; the Tech Stack BYOK line is struck;
+    Graph & Export Semantics now describes the proxy. DESIGN.md's key
+    affordance and its a11y note are replaced, and "No key set" is
+    restated as "Signed out". Two stale code comments pointing at the
+    deleted files were fixed too.
   - Files: `SPEC.md`, `DESIGN.md`
   - Dependencies: the rewire task above, which is done
   - Note: these sections are ceo- and product-manager-owned. This task is
     cleanup to match shipped reality, not a scope change.
 
-- [ ] Task: Live auth verification pass
+- [x] Task: Live auth verification pass
   - Acceptance: against a real Supabase project with Google OAuth
     configured — sign-in with Google succeeds, the session survives a
     reload, sign-out works, and a signed-out visitor still gets the full v0
@@ -415,7 +427,7 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
   - Files: none; verification only, and any fix lands in its owning file
   - Dependencies: `.env.local` populated, migration applied
 
-- [ ] Task: Live AI draft happy-path verification
+- [x] Task: Live AI draft happy-path verification
   - Acceptance: signed in, with no API key anywhere in the browser,
     "Draft with AI" returns a synthesized first-person brief; the result
     block renders with Copy and dismiss; dismissing leaves the selection
@@ -423,7 +435,7 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
   - Verify: manual. Covers SPEC.md Slice 1 criterion 3.
   - Dependencies: live auth verification
 
-- [ ] Task: Live spend-control verification
+- [x] Task: Live spend-control verification
   - Acceptance: with the per-user caps temporarily lowered to a near-zero
     value, a second draft attempt returns the quota message and makes no
     OpenAI call; with the global cap lowered, AI is disabled for everyone
@@ -435,7 +447,7 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
   - Dependencies: live AI draft happy-path verification, and the
     quota-race fix — criterion 5 cannot honestly pass until that lands
 
-- [ ] Task: Content-leak verification
+- [x] Task: Content-leak verification
   - Acceptance: after a real "Draft with AI" call, no persona node content
     appears in server stdout, in any error report, or in any `usage_ledger`
     row — confirmed by reading the actual output, not by code inspection.
@@ -447,7 +459,17 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
     the ledger. Covers SPEC.md Slice 1 criterion 8.
   - Dependencies: live AI draft happy-path verification
 
-- [ ] Task: Account-deletion and privacy-policy verification
+- [ ] Task: Fix the privacy policy's placeholder contact address
+  - Why: found during the 2026-10-20 verification pass. The Contact
+    section reads `your-email@example.com`. The policy is otherwise
+    accurate and does name OpenAI as a processor, but a public privacy
+    policy cannot ship with a fake contact address — it is the one piece
+    of the document a user is told to act on.
+  - Acceptance: a real monitored address replaces the placeholder.
+  - Files: `app/privacy/page.tsx`
+  - Dependencies: none; blocks public launch, not Checkpoint E's other items
+
+- [x] Task: Account-deletion and privacy-policy verification
   - Acceptance: deleting an account removes its auth user and its
     `usage_ledger` rows — the table's `on delete cascade` should handle the
     ledger, so confirm it actually fires rather than assuming. The privacy
@@ -455,14 +477,26 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
     sign-in button is exposed publicly.
   - Verify: manual — delete a test account, then query the ledger for its
     user id and confirm zero rows. Covers SPEC.md Slice 1 criteria 9 and 10.
+    DONE 2026-10-20. Privacy policy: live, reachable, names OpenAI as a
+    processor; its placeholder-contact defect is split out as its own task
+    above. Account deletion: run against a purpose-made test account
+    instead of the founder's only real one, so the pass's evidence
+    survived. Test user created via the admin API, seeded with a ledger
+    row, signed in through the app's real `/auth/confirm` route; "Delete
+    account" returned 200, dropped to guest state, removed the auth user,
+    and cascaded the ledger row away. Founder's account and its three rows
+    verified untouched afterwards.
   - Dependencies: live auth verification
 
 ### Checkpoint E — Slice 1 ship
-- [ ] All ten Slice 1 Success Criteria in SPEC.md checked off by hand
+- [~] Slice 1 Success Criteria: 8 of 10 fully verified 2026-10-20, 2
+      partly — quota concurrency is unit-tested rather than live-raced,
+      and the privacy policy carries a placeholder contact address
+      (its own task above, blocks public launch)
 - [ ] `npm test`, `npm run lint` and `npm run build` pass
 - [x] Quota race closed and covered by a test
-- [ ] Per-user cap numbers ratified in SPEC.md and matching the code
-- [ ] No doc describes the retired BYOK UI as live
+- [x] Per-user cap numbers ratified in SPEC.md and matching the code
+- [x] No doc describes the retired BYOK UI as live
 - [ ] code-reviewer pass over the whole Slice 1 diff, with the money path
       (reserve, settle, refund, and the three cap checks) read line by line
 

@@ -3,10 +3,10 @@
 // map" / llm-proxy section). Client sends data (markdown), never a prompt —
 // this module builds the only prompt. Pure aside from the network call: no
 // DOM, no ledger/budget access (that's lib/llm/budget.ts, built separately),
-// no env reading beyond the server-only validated accessor. Mirrors
-// lib/llm/anthropic.ts's shape (typed errors, raw fetch, no SDK) but is a
-// fresh OpenAI-specific implementation — see that file's own header for why
-// a raw fetch over a SDK dependency.
+// no env reading beyond the server-only validated accessor. Keeps the
+// shape the now-deleted lib/llm/anthropic.ts established (typed errors,
+// raw fetch, no SDK) — one endpoint and one call doesn't justify an SDK
+// dependency, per SPEC.md's Tech Stack and the ponytail skill.
 //
 // Endpoint/param choices, verified against OpenAI's current docs (not
 // memory) on 2026-10-20:

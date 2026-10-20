@@ -67,6 +67,33 @@ export const MAX_OUTPUT_TOKENS = 1024; // hard cap; plan.md estimates ~500 for t
 export const PRICE_PER_MILLION_INPUT = 0.2;
 export const PRICE_PER_MILLION_OUTPUT = 1.25;
 
+// Abort well inside any platform invocation limit. Without this, a hanging
+// upstream lets the function get killed between budget.reserve and
+// budget.settle, stranding a 'reserved' ledger row that counts as spend at
+// worst-case price until migration 0002's TTL expires it. A timeout turns
+// that from the normal outcome of a slow day into an exception we can
+// actually refund. Keep this comfortably below the TTL in that migration.
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * A pessimistic upper bound on input tokens, used to reserve budget before
+ * the call. NOT an estimate — `length / 4` is an English-prose average and
+ * the reservation is supposed to bound the cost, not guess it. One CJK
+ * character is one UTF-16 unit and roughly one token, so a chars/4 estimate
+ * under-reserves such input by about 4x and lets settled cost exceed the
+ * quota the pre-call check just approved.
+ *
+ * ponytail: one token per UTF-16 unit, not a real tokenizer. Dense emoji can
+ * still exceed it slightly (a 2-unit emoji can be ~3 tokens), so this is a
+ * bound for every realistic input rather than a proof. What makes that safe
+ * is the character cap on the route: even at 1.5x this figure a single call
+ * stays under one day's per-user quota, so no one call can blow a cap.
+ * Reach for a real tokenizer only if that stops being true.
+ */
+export function inputTokenBound(markdown: string): number {
+  return markdown.length;
+}
+
 const SYSTEM_PROMPT =
   "You turn a user's persona notes into context for pasting into another AI " +
   "chat. Given the notes below, write a concise, first-person context brief " +
@@ -134,8 +161,16 @@ export async function draftBrief(
         max_output_tokens: MAX_OUTPUT_TOKENS,
         safety_identifier: await hashUserId(userId),
       }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-  } catch {
+  } catch (err) {
+    // A timeout is reported as the same kind as a connection failure: from
+    // the caller's point of view both mean "it didn't happen, refund it".
+    // Logged separately because a run of timeouts is an upstream-health
+    // signal, and silently refunding them would hide it.
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      console.error(`openai.draftBrief: request aborted after ${REQUEST_TIMEOUT_MS}ms`);
+    }
     throw new DraftBriefError("network", "Could not reach OpenAI's API.");
   }
 
@@ -146,6 +181,19 @@ export async function draftBrief(
     throw new DraftBriefError("rate_limited", "OpenAI's API is rate-limiting this key right now.");
   }
   if (!response.ok) {
+    // Everything else is reported to the user as "network", which reads as
+    // transient — but a 400 is permanent and would have every user retrying
+    // forever, each retry writing and refunding a ledger row. Note the
+    // header above: nano's accepted `reasoning.effort` values were only
+    // corroborated against third-party listings, and a rejected value
+    // surfaces exactly here as a 400. This log is the only server-side
+    // signal that the feature is persistently broken rather than flaky.
+    // Deliberately logs the status only, never the response body — an
+    // OpenAI 400 can echo the request input back, which is persona content.
+    console.error(
+      `openai.draftBrief: unexpected status ${response.status} from the Responses API. ` +
+        "If this is persistent, the request shape or a parameter value is wrong, not the network."
+    );
     throw new DraftBriefError("network", `OpenAI's API returned an error (${response.status}).`);
   }
 
@@ -155,9 +203,21 @@ export async function draftBrief(
     throw new DraftBriefError("network", "OpenAI's API returned an unexpected response.");
   }
 
-  return {
-    text,
-    inputTokens: data.usage?.input_tokens ?? 0,
-    outputTokens: data.usage?.output_tokens ?? 0,
-  };
+  // Fail CLOSED on missing usage. Defaulting these to 0 bills a real,
+  // already-paid-for call at $0.00 — the one place in the money path that
+  // failed open. If OpenAI ever omits, renames or nests these fields, every
+  // cap would read zero while real money kept leaving the account, and the
+  // usage log would look like a run of free calls. Charging the worst case
+  // instead is wrong in the safe direction and is loud in the logs.
+  const inputTokens = data.usage?.input_tokens;
+  const outputTokens = data.usage?.output_tokens;
+  if (typeof inputTokens !== "number" || typeof outputTokens !== "number") {
+    console.error(
+      "openai.draftBrief: response had no usage figures — settling at worst case. " +
+        "The Responses API shape may have changed; check usage.input_tokens / usage.output_tokens."
+    );
+    return { text, inputTokens: inputTokenBound(markdown), outputTokens: MAX_OUTPUT_TOKENS };
+  }
+
+  return { text, inputTokens, outputTokens };
 }

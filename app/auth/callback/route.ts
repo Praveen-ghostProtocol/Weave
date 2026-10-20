@@ -20,5 +20,12 @@ export async function GET(request: Request) {
 
   // Guest mode stays fully usable even if sign-in fails — just bounce home
   // with a flag the UI can ignore or surface, never a crash/blank page.
-  return NextResponse.redirect(`${origin}/?auth_error=1`);
+  //
+  // resolveSiteOrigin here too, not the raw `origin`. This branch used the
+  // request-derived origin, which is exactly the x-forwarded-host value
+  // siteOrigin.ts calls an open-redirect primitive — the reasoning was
+  // written one function away and then not applied on the failure path. An
+  // attacker who can set that header turns a bad ?code= into a 302 to their
+  // own site issued by this domain, which launders a phishing link.
+  return NextResponse.redirect(`${resolveSiteOrigin(origin)}/?auth_error=1`);
 }

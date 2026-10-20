@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { draftBrief, DraftBriefError, MODEL } from "../lib/llm/openai";
+import {
+  draftBrief,
+  DraftBriefError,
+  inputTokenBound,
+  MODEL,
+  PRICE_PER_MILLION_INPUT,
+  PRICE_PER_MILLION_OUTPUT,
+} from "../lib/llm/openai";
 
 vi.stubEnv("OPENAI_API_KEY", "sk-test-key");
 
@@ -101,5 +108,39 @@ describe("draftBrief", () => {
   it("throws the network variant when the response has no output_text", async () => {
     mockFetch({ ok: true, status: 200, json: { output: [], usage: { input_tokens: 1, output_tokens: 0 } } });
     await expect(draftBrief("md", "user-1")).rejects.toMatchObject({ kind: "network" });
+  });
+});
+
+// SPEC.md says twice, and the module header repeats, that MODEL and the two
+// price constants must always change together — budget.ts reserves and
+// settles against these prices, so swapping the model alone silently
+// mis-bills the ledger and every cap derived from it. That is the documented
+// failure mode and nothing tested it. `expect(body.model).toBe(MODEL)` above
+// cannot: it compares the constant to itself.
+describe("model and pricing stay in step", () => {
+  const PRICES: Record<string, { input: number; output: number }> = {
+    "gpt-5.4-nano": { input: 0.2, output: 1.25 },
+    "gpt-5.4-mini": { input: 0.75, output: 4.5 },
+  };
+
+  it("prices match the model actually configured", () => {
+    const expected = PRICES[MODEL];
+    expect(
+      expected,
+      `No pricing recorded for model "${MODEL}". Add it to this table in the ` +
+        "same change that swaps the model, or the ledger bills at the old rate."
+    ).toBeDefined();
+    expect(PRICE_PER_MILLION_INPUT).toBe(expected.input);
+    expect(PRICE_PER_MILLION_OUTPUT).toBe(expected.output);
+  });
+});
+
+describe("inputTokenBound", () => {
+  it("is a bound, not a chars/4 estimate", () => {
+    // The regression it exists to prevent: 500 CJK characters are ~500
+    // tokens, which chars/4 would have reserved as 125.
+    expect(inputTokenBound("漢".repeat(500))).toBe(500);
+    expect(inputTokenBound("hello")).toBe(5);
+    expect(inputTokenBound("")).toBe(0);
   });
 });

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // route's own decision-making for real. The point of this file is the
 // money path — specifically that a reservation lands BEFORE any cap is
 // read, which is what stops concurrent requests overspending a quota.
-const { getUserMock, budgetMocks, draftBriefMock } = vi.hoisted(() => ({
+const { getUserMock, budgetMocks, draftBriefMock, MockDraftBriefError } = vi.hoisted(() => ({
   getUserMock: vi.fn(),
   budgetMocks: {
     isKillSwitchActive: vi.fn(),
@@ -16,6 +16,19 @@ const { getUserMock, budgetMocks, draftBriefMock } = vi.hoisted(() => ({
     refund: vi.fn(),
   },
   draftBriefMock: vi.fn(),
+  // The route does `err instanceof DraftBriefError` against the module it
+  // imports — which is this mock. Declaring the class here (rather than
+  // inline in the factory) lets the tests construct the *same* class the
+  // route will compare against, so the error-mapping branches are actually
+  // entered. A separately-declared lookalike silently skips all of them.
+  MockDraftBriefError: class DraftBriefError extends Error {
+    kind: string;
+    constructor(kind: string) {
+      super(kind);
+      this.name = "DraftBriefError";
+      this.kind = kind;
+    }
+  },
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -26,13 +39,10 @@ vi.mock("@/lib/llm/budget", () => budgetMocks);
 
 vi.mock("@/lib/llm/openai", () => ({
   draftBrief: draftBriefMock,
-  DraftBriefError: class DraftBriefError extends Error {
-    kind: string;
-    constructor(kind: string) {
-      super(kind);
-      this.kind = kind;
-    }
-  },
+  DraftBriefError: MockDraftBriefError,
+  // The real bound, not a stub: the route reserves with it, so a test that
+  // stubbed it couldn't catch the reservation being under-priced.
+  inputTokenBound: (markdown: string) => markdown.length,
   MODEL: "gpt-5.4-nano",
   MAX_OUTPUT_TOKENS: 1024,
   PRICE_PER_MILLION_INPUT: 0.2,
@@ -159,15 +169,83 @@ describe("POST /api/ai/draft-brief — guards before any spend", () => {
     expect(budgetMocks.reserve).not.toHaveBeenCalled();
   });
 
-  it("refunds the reservation when the OpenAI call itself fails", async () => {
-    draftBriefMock.mockRejectedValue(
-      Object.assign(new Error("rate_limited"), { kind: "rate_limited" })
-    );
+  it("400s on markdown over the character cap, without touching the ledger", async () => {
+    // The character cap is what bounds per-call cost; nothing tested it.
+    const res = await post("x".repeat(60_001));
 
-    // The thrown object isn't a real DraftBriefError instance, so the route
-    // rethrows it — the refund still has to have happened first.
+    expect(res.status).toBe(400);
+    expect(budgetMocks.reserve).not.toHaveBeenCalled();
+  });
+
+  it("rethrows a non-DraftBriefError from the call, refunding first", async () => {
+    draftBriefMock.mockRejectedValue(new Error("something unexpected"));
+
     await expect(post()).rejects.toThrow();
     expect(budgetMocks.refund).toHaveBeenCalledWith("res-1");
     expect(budgetMocks.settle).not.toHaveBeenCalled();
+  });
+});
+
+// SPEC's live criterion is that every failure shows a clear inline message,
+// and ExportPanel delegates all wording to the route — so this mapping IS
+// the implementation of that criterion. It previously had no coverage at
+// all: the suite's only failure test threw an object that wasn't a
+// DraftBriefError, so the whole branch was skipped and all three arms could
+// have been deleted with the suite still green.
+describe("POST /api/ai/draft-brief — upstream error mapping", () => {
+  it.each([
+    ["rate_limited", 503, /busy/i],
+    ["network", 502, /could not reach/i],
+    ["invalid_key", 500, /unavailable/i],
+  ])("maps %s to %i with its own message", async (kind, status, messageRe) => {
+    draftBriefMock.mockRejectedValue(new MockDraftBriefError(kind as string));
+
+    const res = await post();
+
+    expect(res.status).toBe(status);
+    expect((await res.json()).error).toMatch(messageRe as RegExp);
+    expect(budgetMocks.refund).toHaveBeenCalledWith("res-1");
+    expect(budgetMocks.settle).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/ai/draft-brief — reservation is never stranded", () => {
+  it("refunds when the cap check itself throws", async () => {
+    budgetMocks.getDailySpend.mockRejectedValue(new Error("supabase down"));
+
+    await expect(post()).rejects.toThrow(/supabase down/);
+    expect(budgetMocks.refund).toHaveBeenCalledWith("res-1");
+    expect(draftBriefMock).not.toHaveBeenCalled();
+  });
+
+  it("still returns the draft when settling fails after a billed call", async () => {
+    // The money is already spent. 500ing here would withhold output the
+    // user paid for AND leave the reservation standing.
+    budgetMocks.settle.mockRejectedValue(new Error("ledger write failed"));
+
+    const res = await post();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ text: "A brief." });
+  });
+
+  it("does not let a failing refund mask the original error", async () => {
+    budgetMocks.getDailySpend.mockRejectedValue(new Error("supabase down"));
+    budgetMocks.refund.mockRejectedValue(new Error("refund also failed"));
+
+    await expect(post()).rejects.toThrow(/supabase down/);
+  });
+});
+
+describe("POST /api/ai/draft-brief — the reservation is a bound, not an estimate", () => {
+  it("reserves at one token per character, so non-ASCII can't under-reserve", async () => {
+    // A chars/4 estimate under-reserved CJK by ~4x, letting settled cost
+    // exceed the quota the pre-call check had just approved.
+    const cjk = "漢".repeat(500);
+    await post(cjk);
+
+    expect(budgetMocks.reserve).toHaveBeenCalledWith(
+      expect.objectContaining({ estimatedInputTokens: 500 })
+    );
   });
 });

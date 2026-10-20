@@ -1,7 +1,29 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import * as budget from "@/lib/llm/budget";
-import { draftBrief, DraftBriefError, MODEL, MAX_OUTPUT_TOKENS, PRICE_PER_MILLION_INPUT, PRICE_PER_MILLION_OUTPUT } from "@/lib/llm/openai";
+import {
+  draftBrief,
+  DraftBriefError,
+  inputTokenBound,
+  MODEL,
+  MAX_OUTPUT_TOKENS,
+  PRICE_PER_MILLION_INPUT,
+  PRICE_PER_MILLION_OUTPUT,
+} from "@/lib/llm/openai";
+
+/**
+ * Refund that never throws. A refund runs on paths that are already failing,
+ * and letting it throw replaces the real error with a bookkeeping one while
+ * stranding the reservation anyway. Migration 0002's TTL is the backstop if
+ * this genuinely fails, so the loud log is the actionable part.
+ */
+async function safeRefund(reservationId: string): Promise<void> {
+  try {
+    await budget.refund(reservationId);
+  } catch (err) {
+    console.error(`draft-brief: refund failed for reservation ${reservationId}`, err);
+  }
+}
 
 // llm-proxy's first fixed task endpoint (tasks/plan.md's llm-proxy section).
 // Client sends only { markdown } — never a prompt — this route is the only
@@ -86,15 +108,27 @@ export async function POST(request: Request) {
     userId: user.id,
     task: TASK,
     model: MODEL,
-    estimatedInputTokens: Math.ceil(markdown.length / 4), // same heuristic as lib/graph/export.ts
+    // A BOUND, not an estimate — see inputTokenBound. The old chars/4
+    // heuristic under-reserved non-ASCII input by ~4x, which let settled
+    // cost exceed the quota the pre-call check had just approved.
+    estimatedInputTokens: inputTokenBound(markdown),
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     pricePerMillionInput: PRICE_PER_MILLION_INPUT,
     pricePerMillionOutput: PRICE_PER_MILLION_OUTPUT,
   });
 
-  const exceeded = await capExceeded(user.id);
+  // From here on the reservation exists, so every exit has to settle or
+  // refund it. A throw out of capExceeded (a failing spend query) would
+  // otherwise strand it at worst-case price for the whole window.
+  let exceeded: { error: string; status: number } | null;
+  try {
+    exceeded = await capExceeded(user.id);
+  } catch (err) {
+    await safeRefund(reservationId);
+    throw err;
+  }
   if (exceeded) {
-    await budget.refund(reservationId);
+    await safeRefund(reservationId);
     return NextResponse.json({ error: exceeded.error }, { status: exceeded.status });
   }
 
@@ -102,7 +136,7 @@ export async function POST(request: Request) {
   try {
     result = await draftBrief(markdown, user.id);
   } catch (err) {
-    await budget.refund(reservationId);
+    await safeRefund(reservationId);
 
     if (err instanceof DraftBriefError) {
       if (err.kind === "rate_limited") {
@@ -120,12 +154,30 @@ export async function POST(request: Request) {
     throw err;
   }
 
-  await budget.settle(reservationId, {
-    actualInputTokens: result.inputTokens,
-    actualOutputTokens: result.outputTokens,
-    pricePerMillionInput: PRICE_PER_MILLION_INPUT,
-    pricePerMillionOutput: PRICE_PER_MILLION_OUTPUT,
-  });
+  // The call succeeded and is already billed by OpenAI. If settling the
+  // ledger fails, that is a bookkeeping problem, not the user's — 500ing
+  // here would withhold a draft they have already paid for AND leave the
+  // reservation standing. Log it loudly and hand over the text; migration
+  // 0002's TTL stops the stranded row counting against them forever.
+  //
+  // ponytail: the accepted ceiling is that a failed settle under-records
+  // real spend once the TTL expires the row. Rare, logged, and the safer
+  // side to err on than locking a paying user out. If these ever show up in
+  // the logs at volume, that is the signal to add a retry.
+  try {
+    await budget.settle(reservationId, {
+      actualInputTokens: result.inputTokens,
+      actualOutputTokens: result.outputTokens,
+      pricePerMillionInput: PRICE_PER_MILLION_INPUT,
+      pricePerMillionOutput: PRICE_PER_MILLION_OUTPUT,
+    });
+  } catch (err) {
+    console.error(
+      `draft-brief: settle failed for reservation ${reservationId} after a billed OpenAI call — ` +
+        "ledger may under-record this spend once the reservation TTL expires",
+      err
+    );
+  }
 
   return NextResponse.json({ text: result.text });
 }

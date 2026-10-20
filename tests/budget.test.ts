@@ -5,13 +5,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // — rather than hitting the real DB, since usage_ledger's FK to auth.users
 // means a fake user_id can't be inserted for real without a real signed-up
 // user on hand).
-const { fromMock, logUsageMock } = vi.hoisted(() => ({
+const { fromMock, rpcMock, logUsageMock } = vi.hoisted(() => ({
   fromMock: vi.fn(),
+  rpcMock: vi.fn(),
   logUsageMock: vi.fn(),
 }));
 
 vi.mock("../lib/supabase/admin", () => ({
-  createAdminClient: () => ({ from: fromMock }),
+  createAdminClient: () => ({ from: fromMock, rpc: rpcMock }),
 }));
 
 vi.mock("../lib/log", () => ({
@@ -151,54 +152,99 @@ describe("refund", () => {
   });
 });
 
+// Spend summation goes through the `spend_since` Postgres function
+// (migration 0002), NOT a row select summed in JS. These tests assert the
+// window boundaries that are passed to it, because those two date
+// expressions are the only non-obvious arithmetic in the module and nothing
+// else would catch them being wrong: summing from last month, or from the
+// epoch, or using the month start for the daily cap, are all silent
+// failures that change when a cap fires.
 describe("getMonthlySpend", () => {
-  it("sums cost_usd excluding refunded rows, scoped to a user when given", async () => {
-    const builder = makeQueryBuilder({
-      data: [{ cost_usd: 1.5 }, { cost_usd: 2.25 }],
-      error: null,
-    });
-    fromMock.mockReturnValue(builder);
+  it("asks Postgres for the sum rather than summing rows here", async () => {
+    // Regression guard. Selecting rows and reducing them in JS is what this
+    // used to do, and PostgREST silently truncates at max-rows (1000 by
+    // default), so the global cap stopped firing past that many rows.
+    rpcMock.mockResolvedValue({ data: 3.75, error: null });
 
     const total = await getMonthlySpend({ userId: "user-1" });
 
-    expect(builder.neq).toHaveBeenCalledWith("status", "refunded");
-    expect(builder.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(rpcMock).toHaveBeenCalledWith("spend_since", expect.anything());
+    expect(fromMock).not.toHaveBeenCalled();
     expect(total).toBeCloseTo(3.75, 9);
   });
 
-  it("is global (no user filter) when userId is omitted", async () => {
-    const builder = makeQueryBuilder({ data: [{ cost_usd: 5 }], error: null });
-    fromMock.mockReturnValue(builder);
+  it("scopes to a user when given and is global when omitted", async () => {
+    rpcMock.mockResolvedValue({ data: 5, error: null });
 
-    const total = await getMonthlySpend({});
+    await getMonthlySpend({ userId: "user-1" });
+    expect(rpcMock).toHaveBeenLastCalledWith(
+      "spend_since",
+      expect.objectContaining({ p_user: "user-1" })
+    );
 
-    expect(builder.eq).not.toHaveBeenCalled();
-    expect(total).toBe(5);
+    await getMonthlySpend({});
+    expect(rpcMock).toHaveBeenLastCalledWith(
+      "spend_since",
+      expect.objectContaining({ p_user: null })
+    );
   });
 
-  it("throws if the query errors", async () => {
-    fromMock.mockReturnValue(makeQueryBuilder({ data: null, error: { message: "query failed" } }));
+  it("starts the window at the first instant of the current UTC month", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-17T08:30:00.000Z"));
+    rpcMock.mockResolvedValue({ data: 0, error: null });
+
+    await getMonthlySpend({});
+
+    expect(rpcMock).toHaveBeenCalledWith(
+      "spend_since",
+      expect.objectContaining({ p_start: "2026-03-01T00:00:00.000Z" })
+    );
+    vi.useRealTimers();
+  });
+
+  it("throws if the rpc errors", async () => {
+    rpcMock.mockResolvedValue({ data: null, error: { message: "query failed" } });
     await expect(getMonthlySpend({})).rejects.toThrow(/query failed/);
+  });
+
+  it("throws rather than reading a missing total as zero spent", async () => {
+    // Failing open here would silently disable every cap that reads it.
+    rpcMock.mockResolvedValue({ data: null, error: null });
+    await expect(getMonthlySpend({})).rejects.toThrow(/no value/);
+  });
+
+  it("accepts a numeric returned as a string", async () => {
+    // PostgREST serialises Postgres `numeric` as a string past JS safe range.
+    rpcMock.mockResolvedValue({ data: "12.345678", error: null });
+    expect(await getMonthlySpend({})).toBeCloseTo(12.345678, 9);
+  });
+
+  it("throws on a non-numeric total instead of coercing it to NaN", async () => {
+    rpcMock.mockResolvedValue({ data: "not-a-number", error: null });
+    await expect(getMonthlySpend({})).rejects.toThrow(/non-numeric/);
   });
 });
 
 describe("getDailySpend", () => {
-  it("sums cost_usd excluding refunded rows, scoped to the given user and day", async () => {
-    const builder = makeQueryBuilder({
-      data: [{ cost_usd: 0.01 }, { cost_usd: 0.02 }],
-      error: null,
+  it("starts the window at midnight UTC today, not the month start", async () => {
+    // The specific regression this catches: reusing the month boundary here
+    // would turn the $0.05 daily cap into a second monthly one.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-17T08:30:00.000Z"));
+    rpcMock.mockResolvedValue({ data: 0, error: null });
+
+    await getDailySpend("user-1");
+
+    expect(rpcMock).toHaveBeenCalledWith("spend_since", {
+      p_start: "2026-03-17T00:00:00.000Z",
+      p_user: "user-1",
     });
-    fromMock.mockReturnValue(builder);
-
-    const total = await getDailySpend("user-1");
-
-    expect(builder.neq).toHaveBeenCalledWith("status", "refunded");
-    expect(builder.eq).toHaveBeenCalledWith("user_id", "user-1");
-    expect(total).toBeCloseTo(0.03, 9);
+    vi.useRealTimers();
   });
 
-  it("throws if the query errors", async () => {
-    fromMock.mockReturnValue(makeQueryBuilder({ data: null, error: { message: "query failed" } }));
+  it("throws if the rpc errors", async () => {
+    rpcMock.mockResolvedValue({ data: null, error: { message: "query failed" } });
     await expect(getDailySpend("user-1")).rejects.toThrow(/query failed/);
   });
 });

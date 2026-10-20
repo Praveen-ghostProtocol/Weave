@@ -123,53 +123,69 @@ export async function refund(reservationId: string): Promise<void> {
 }
 
 /**
- * Sums cost_usd for the current calendar month, excluding refunded rows.
- * Scoped to one user, or global (all users) when userId is omitted — the
- * figure the $20/mo global cap check reads.
+ * Sums spend in Postgres via the `spend_since` function (migration 0002).
+ *
+ * This MUST stay a database-side aggregate. Selecting the rows and summing
+ * them here is what the previous version did, and PostgREST silently
+ * truncates at the project's max-rows setting (1000 by default) with a 200
+ * and no ORDER BY — so past that many rows in the window the total stops
+ * growing and whatever cap reads it quietly stops firing. A scalar from the
+ * database cannot truncate.
+ *
+ * `spend_since` also drops reservations older than its TTL, so a request
+ * killed between reserve and settle stops counting as spend. See the
+ * migration for why, and for the ceiling that carries.
  */
-export async function getMonthlySpend(scope: { userId?: string }): Promise<number> {
-  const now = new Date();
-  const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+async function spendSince(startIso: string, userId?: string): Promise<number> {
+  const { data, error } = await createAdminClient().rpc("spend_since", {
+    p_start: startIso,
+    p_user: userId ?? null,
+  });
 
-  let query = createAdminClient()
-    .from("usage_ledger")
-    .select("cost_usd")
-    .gte("created_at", startOfMonth)
-    .neq("status", "refunded");
-
-  if (scope.userId) {
-    query = query.eq("user_id", scope.userId);
-  }
-
-  const { data, error } = await query;
   if (error) {
-    throw new Error(`budget.getMonthlySpend: query failed: ${error.message}`);
+    throw new Error(`budget.spendSince: rpc failed: ${error.message}`);
   }
+  // numeric comes back as a string from PostgREST when it exceeds JS safe
+  // range; Number() handles both that and the normal numeric case. A null
+  // would mean the function returned nothing, which coalesce(…, 0) prevents
+  // — treat it as an error rather than silently reading it as $0 spent.
+  if (data === null || data === undefined) {
+    throw new Error("budget.spendSince: rpc returned no value");
+  }
+  const total = Number(data);
+  if (!Number.isFinite(total)) {
+    throw new Error(`budget.spendSince: rpc returned a non-numeric total: ${String(data)}`);
+  }
+  return total;
+}
 
-  return (data ?? []).reduce((sum: number, row: { cost_usd: number }) => sum + Number(row.cost_usd), 0);
+function startOfUtcMonthIso(now = new Date()): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+}
+
+function startOfUtcDayIso(now = new Date()): string {
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  ).toISOString();
 }
 
 /**
- * Sums cost_usd for the current calendar day (UTC), excluding refunded rows,
- * for one user — the figure the $0.05/day per-user cap check reads. Same
- * shape as getMonthlySpend, just day-scoped instead of month-scoped.
+ * Spend for the current calendar month (UTC). Scoped to one user, or global
+ * across all users when userId is omitted — the figure the $20/mo global cap
+ * reads.
+ */
+export async function getMonthlySpend(scope: { userId?: string }): Promise<number> {
+  return spendSince(startOfUtcMonthIso(), scope.userId);
+}
+
+/**
+ * Spend for the current calendar day (UTC) for one user — the figure the
+ * $0.05/day per-user cap reads. Same aggregate as getMonthlySpend, just a
+ * different window start; both go through spendSince so a fix to one is a
+ * fix to both.
  */
 export async function getDailySpend(userId: string): Promise<number> {
-  const now = new Date();
-  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-
-  const { data, error } = await createAdminClient()
-    .from("usage_ledger")
-    .select("cost_usd")
-    .gte("created_at", startOfDay)
-    .neq("status", "refunded")
-    .eq("user_id", userId);
-
-  if (error) {
-    throw new Error(`budget.getDailySpend: query failed: ${error.message}`);
-  }
-
-  return (data ?? []).reduce((sum: number, row: { cost_usd: number }) => sum + Number(row.cost_usd), 0);
+  return spendSince(startOfUtcDayIso(), userId);
 }
 
 /** AI_KILL_SWITCH env var — any truthy string means active, nothing should call OpenAI. */

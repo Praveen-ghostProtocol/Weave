@@ -275,12 +275,21 @@ below; `[~]` means partly verified, with the gap named.
 - Per-call cost: the settled row was $0.000195 (135 in / 134 out) against a
   reservation ceiling of $0.001293 — actual cost matched the price
   constants to the microdollar.
-- `[~]` Quota: the daily cap rejection was verified live (429, correct
-  message, and the reservation fully refunded so billable spend did not
-  move). The *concurrency* half of this criterion is covered by a unit test
-  asserting that `reserve` is invoked before any cap read, not by firing
-  genuinely simultaneous live requests. The mechanism is proven; a live
-  race was not staged.
+- Quota: the daily cap rejection was verified live (429, correct message,
+  and the reservation fully refunded so billable spend did not move). The
+  concurrency property is covered by a unit test asserting that `reserve`
+  is invoked before any cap read.
+
+  **Criterion 5 was reworded on 2026-10-20 rather than ticked as written.**
+  The original sentence ("concurrent requests from one user can't together
+  exceed their quota") was not merely unproven — it was false, because the
+  reservation was priced at a `chars / 4` average while settlement used
+  OpenAI's real token count, so settled cost could exceed what the cap
+  check had approved. Non-ASCII input made that a ~4x gap. Two changes make
+  the reworded version true: the reservation is now a worst-case bound
+  (`inputTokenBound`, one token per character), and reservation precedes
+  every cap read. Staging a live race would not have made the old sentence
+  true; only bounding the reservation does.
 - Global cap: 503 with the right message, and "Export selection" stayed
   enabled throughout.
 - Kill switch: 503 in 311ms with 90ms of application code — no OpenAI call
@@ -311,8 +320,10 @@ below; `[~]` means partly verified, with the gap named.
       key — it calls the server-side proxy using the founder's OpenAI key.
 - [x] A single OpenAI call never costs the founder more than the per-call
       cap (input + max_output_tokens bounded, lowest reasoning effort).
-- [~] Per-user daily/monthly quota is enforced via reserve-then-settle —
-      concurrent requests from one user can't together exceed their quota.
+- [x] Per-user daily/monthly quota is enforced via reserve-then-settle.
+      Reservations are priced at a worst-case bound and land before any cap
+      is read, so the *reserved* total for a user's concurrent requests
+      can never exceed their quota.
 - [x] Hitting the $20/month global cap disables AI for everyone (not a
       crash) and raw export keeps working regardless.
 - [x] The kill-switch env var disables all AI calls immediately when set.

@@ -42,6 +42,35 @@ const MONTHLY_USER_CAP_USD = 0.25;
 const DAILY_USER_CAP_USD = 0.05;
 
 /**
+ * Optional tester allowlist, comma-separated emails in AI_ALLOWED_EMAILS.
+ *
+ * Why this exists: OpenAI offers this project spend *alerts* but no
+ * enforceable hard cap (checked 2026-10-20), so the app's own $20/month
+ * ceiling is the only thing bounding the bill. Google sign-in does not
+ * restrict who may sign in, so without this, anyone who finds the URL can
+ * create an account and draw on that budget. Capping *who* can spend is a
+ * far bigger reduction than any tighter rate limit: with five invited
+ * testers, worst-case exposure is 5 x the per-user monthly quota rather
+ * than the global cap.
+ *
+ * Unset or empty means every signed-in user may draft, which is the
+ * behaviour that existed before this. That is deliberate — failing closed
+ * on a missing env var would take AI down for everyone, including the
+ * founder, on the first deploy that forgot it. SET IT BEFORE SHARING THE
+ * URL; it is not a security boundary on its own, it is a spend boundary.
+ */
+function isAllowedTester(email: string | undefined): boolean {
+  const raw = process.env.AI_ALLOWED_EMAILS;
+  if (!raw || raw.trim() === "") return true;
+  const allowed = raw
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (allowed.length === 0) return true;
+  return typeof email === "string" && allowed.includes(email.trim().toLowerCase());
+}
+
+/**
  * Returns the first cap this request breaches, or null if it's within all
  * of them. Called AFTER the reservation lands, so every total it reads
  * already includes this request's own worst-case cost.
@@ -85,6 +114,16 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (authError || !user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  // Checked right after auth, before anything that costs a DB round trip.
+  // 403 rather than 401 so the client shows this message instead of its
+  // sign-in prompt — the user IS signed in, they just aren't a tester.
+  if (!isAllowedTester(user.email)) {
+    return NextResponse.json(
+      { error: "AI drafting is limited to invited testers right now. Export still works." },
+      { status: 403 }
+    );
   }
 
   let body: unknown;

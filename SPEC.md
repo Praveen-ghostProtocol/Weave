@@ -113,6 +113,39 @@ the public version, where `llm-proxy` keeps the real key server-side only.
     roughly 11 calls and the monthly cap roughly 58. Changing either is an
     "Ask first" item below; change them here and in
     `app/api/ai/draft-brief/route.ts` together, never one alone.
+  - **Provider-side model allowlist (added 2026-10-20).** The OpenAI
+    project's "Allowed models" list contains `gpt-5.4-nano` and nothing
+    else. Verified by calling the API directly: nano returns 200 while
+    `gpt-5.4`, `gpt-5.5` and `gpt-5.6-luna` all return 403, and the key can
+    list only nano. This is enforced by OpenAI rather than by our code, so
+    it holds even if the model constant is changed by mistake or the key
+    leaks — it caps the per-token *price*, which no app-level control can.
+    Effectively control #2 of plan.md's nine, in a stronger form than
+    planned.
+
+    **Gotcha for later:** if the node-drafting spec's escape hatch is ever
+    pulled and a task moves to `gpt-5.4-mini`, mini must be added to this
+    list in the same change or every call 403s. Changing `MODEL` alone is
+    not enough, and this is a third place that has to move with it,
+    alongside the two price constants.
+  - **There is no enforceable spend cap at OpenAI** (checked 2026-10-20).
+    The project offers spend *alerts* and rate limits, but no hard ceiling,
+    so the $20/month figure below is enforced by this app and nothing else.
+    That raises the stakes on the ledger being correct and is why the
+    truncation bug in `getMonthlySpend` was launch-blocking rather than a
+    nice-to-have. Prepaid credit is not a backstop at this scale: the
+    balance is ~$1000, so the provider's own stop is $1000, not $20.
+  - **Tester allowlist: `AI_ALLOWED_EMAILS`** (comma-separated). Google
+    sign-in does not restrict who may create an account, so without this
+    anyone who finds the URL can draw on the budget above. Capping *who*
+    can spend is the largest available reduction while there is no
+    provider cap: with three invited testers, worst-case exposure is
+    3 x the per-user monthly quota rather than the global ceiling.
+    Unset means everyone signed in may draft, deliberately, so a forgotten
+    env var does not take AI down for everyone — it must be set in every
+    deployed environment, not just locally. Verified live 2026-10-20: an
+    excluded account gets 403 with no ledger write, an included one gets a
+    draft.
   - **Quota enforcement is reserve-first, then check.** The cap comparison
     reads totals that already include the request's own reservation.
     Checking the caps before inserting the reservation leaves a
@@ -261,6 +294,26 @@ where the behaviour survived the move to the proxy.
       was a quota, the global cap, the kill switch, or an upstream fault.
 
 ### Slice 1 — Public launch (platform-backend + auth + llm-proxy)
+
+**Re-verified 2026-10-20 after the money-path fixes** (commit "Close the
+three launch blockers"), because those changes altered the spend path
+itself and the earlier results no longer covered it. Against the live
+Supabase project with migration 0002 applied: `spend_since` returns the
+exact non-refunded total and is correctly denied to the anon key; a stale
+20-minute-old $9.99 reservation is excluded from the sum while a fresh one
+counts, which is the lockout protection working; the login page offers
+Google only; `/auth/confirm` is gone. A real draft returned a brief and
+settled at $0.000199 for 144 in / 136 out, matching the price constants
+exactly, with the usage log carrying no node content.
+
+A failed attempt during this pass turned out to be the better test: the
+request reserved, cleared the cap check against the real `spend_since`
+function, failed at the OpenAI call, and came back **refunded** rather
+than stranded — exercising the orphan path end to end. That failure was
+local TLS interception by antivirus on the founder's machine, not a code
+fault, and does not affect deployed environments.
+
+Total spend across both passes: $0.000394.
 
 **Verification pass run 2026-10-20 against a live signed-in session, a real
 Supabase project and real OpenAI calls.** Total spend: $0.000195. Evidence

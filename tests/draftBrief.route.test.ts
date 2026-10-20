@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Same philosophy as tests/budget.test.ts: mock the things that cross a
 // real boundary (Supabase auth, the ledger, OpenAI) and exercise the
@@ -76,7 +76,7 @@ function spendAfterReserving(opts: { global?: number; userMonthly?: number; user
 beforeEach(() => {
   vi.clearAllMocks();
   budgetMocks.isKillSwitchActive.mockReturnValue(false);
-  getUserMock.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+  getUserMock.mockResolvedValue({ data: { user: { id: "user-1", email: "founder@example.com" } }, error: null });
   budgetMocks.reserve.mockResolvedValue({ id: "res-1", reservedCostUsd: 0.016 });
   budgetMocks.settle.mockResolvedValue({ costUsd: 0.005 });
   budgetMocks.refund.mockResolvedValue(undefined);
@@ -192,6 +192,58 @@ describe("POST /api/ai/draft-brief — guards before any spend", () => {
 // all: the suite's only failure test threw an object that wasn't a
 // DraftBriefError, so the whole branch was skipped and all three arms could
 // have been deleted with the suite still green.
+// The only control bounding *who* can draw on the founder's budget.
+// OpenAI offers this project no enforceable spend cap, so an unbounded
+// signup path is an unbounded bill.
+describe("POST /api/ai/draft-brief — tester allowlist", () => {
+  const ORIGINAL = process.env.AI_ALLOWED_EMAILS;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.AI_ALLOWED_EMAILS;
+    else process.env.AI_ALLOWED_EMAILS = ORIGINAL;
+  });
+
+  function signedInAs(email: string | undefined) {
+    getUserMock.mockResolvedValue({ data: { user: { id: "user-1", email } }, error: null });
+  }
+
+  it("allows everyone when the list is unset, preserving prior behaviour", async () => {
+    delete process.env.AI_ALLOWED_EMAILS;
+    signedInAs("anyone@example.com");
+    expect((await post()).status).toBe(200);
+  });
+
+  it("allows an email on the list", async () => {
+    process.env.AI_ALLOWED_EMAILS = "friend@example.com, founder@example.com";
+    signedInAs("founder@example.com");
+    expect((await post()).status).toBe(200);
+  });
+
+  it("403s an email that is not on the list, without touching the ledger", async () => {
+    process.env.AI_ALLOWED_EMAILS = "friend@example.com";
+    signedInAs("stranger@example.com");
+
+    const res = await post();
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/invited testers/i);
+    // The whole point: a stranger costs nothing, not even a DB write.
+    expect(budgetMocks.reserve).not.toHaveBeenCalled();
+    expect(draftBriefMock).not.toHaveBeenCalled();
+  });
+
+  it("matches case-insensitively and ignores surrounding whitespace", async () => {
+    process.env.AI_ALLOWED_EMAILS = "  Friend@Example.COM  ,  ";
+    signedInAs("friend@example.com");
+    expect((await post()).status).toBe(200);
+  });
+
+  it("403s a session with no email at all when a list is set", async () => {
+    process.env.AI_ALLOWED_EMAILS = "friend@example.com";
+    signedInAs(undefined);
+    expect((await post()).status).toBe(403);
+  });
+});
+
 describe("POST /api/ai/draft-brief — upstream error mapping", () => {
   it.each([
     ["rate_limited", 503, /busy/i],

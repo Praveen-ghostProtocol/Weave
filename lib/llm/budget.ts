@@ -149,6 +149,29 @@ export async function getMonthlySpend(scope: { userId?: string }): Promise<numbe
   return (data ?? []).reduce((sum: number, row: { cost_usd: number }) => sum + Number(row.cost_usd), 0);
 }
 
+/**
+ * Sums cost_usd for the current calendar day (UTC), excluding refunded rows,
+ * for one user — the figure the $0.05/day per-user cap check reads. Same
+ * shape as getMonthlySpend, just day-scoped instead of month-scoped.
+ */
+export async function getDailySpend(userId: string): Promise<number> {
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+
+  const { data, error } = await createAdminClient()
+    .from("usage_ledger")
+    .select("cost_usd")
+    .gte("created_at", startOfDay)
+    .neq("status", "refunded")
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(`budget.getDailySpend: query failed: ${error.message}`);
+  }
+
+  return (data ?? []).reduce((sum: number, row: { cost_usd: number }) => sum + Number(row.cost_usd), 0);
+}
+
 /** AI_KILL_SWITCH env var — any truthy string means active, nothing should call OpenAI. */
 export function isKillSwitchActive(): boolean {
   return Boolean(process.env.AI_KILL_SWITCH);

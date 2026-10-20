@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { draftBrief, DraftBriefError } from "../lib/llm/openai";
+import { draftBrief, DraftBriefError, MODEL } from "../lib/llm/openai";
 
 vi.stubEnv("OPENAI_API_KEY", "sk-test-key");
 
@@ -41,7 +41,12 @@ describe("draftBrief", () => {
     expect(headers.authorization).toBe("Bearer sk-test-key");
 
     const body = JSON.parse(requestInit.body as string);
-    expect(body.model).toBe("gpt-5.4-mini");
+    // Assert against the exported constant, not a literal: the model is a
+    // cost decision that lives in one place, and a second copy here just
+    // turns every deliberate swap into a spurious test failure. What this
+    // line is really checking is that the request sends the configured
+    // model at all.
+    expect(body.model).toBe(MODEL);
     expect(typeof body.instructions).toBe("string");
     expect(body.instructions.length).toBeGreaterThan(0);
     expect(body.input).toBe("my persona markdown");

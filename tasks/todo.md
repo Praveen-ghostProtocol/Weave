@@ -286,3 +286,207 @@ addendum's "no backend" premise holds.
       shows a clear inline error, not a silent failure
 - [x] product-manager design review against DESIGN.md's AI draft assist
       section before calling this phase done
+
+## Phase 6: Slice 1 — public launch (platform-backend + auth + llm-proxy)
+
+Scope is SPEC.md's "Slice 1" only. The capability map in `tasks/plan.md`
+covers everything deferred past it; nothing from that list gets built here
+without its own spec and go-ahead (SPEC.md Boundaries, "Ask first").
+
+Most of Slice 1's code already landed across three commits. What remains is
+one correctness fix, two decisions, a doc cleanup, and a verification pass
+that can only run against a live signed-in session — which is why the ten
+Slice 1 Success Criteria in SPEC.md are all still unchecked.
+
+- [x] Task: Retire BYOK, point "Draft with AI" at the server proxy
+  - Acceptance: `ExportPanel` POSTs `{ markdown }` to
+    `/api/ai/draft-brief` instead of calling Anthropic; the API-key input,
+    Save/Clear buttons and `Key` header icon are gone; a signed-out click
+    shows an inline sign-in prompt and fires no request (button keeps its
+    normal styling, per DESIGN.md's "No key set" rule — a discoverable
+    state, not a failure); a 401 mid-session shows that same prompt; every
+    other failure shows the server's own `error` string; raw export still
+    works signed out. `lib/llm/anthropic.ts`, `lib/storage/apiKey.ts` and
+    their tests deleted (no remaining importers).
+  - Verify: `npm test`, `npm run lint`, `npm run build` all pass; in a
+    browser, signed out, confirm no `/api/ai/draft-brief` request fires and
+    the prompt renders. DONE — verified 2026-10-20.
+  - Files: `components/ExportPanel.tsx`, plus four deletions
+  - Dependencies: none
+
+- [x] Task: Close the per-user quota race in the draft-brief route
+  - Why: SPEC.md's Success Criteria claims "concurrent requests from one
+    user can't together exceed their quota." The route does not currently
+    deliver that. It reads daily and monthly spend, *then* inserts the
+    reservation as a separate statement — two concurrent requests both read
+    a pre-reservation total, both pass the cap check, and both proceed.
+    Reserve-then-settle closes the race only when the check and the insert
+    are atomic. Worst case per call is roughly $0.016 (15k input plus 1024
+    output at mini pricing), so a burst of N concurrent requests can
+    reserve about $0.016N against a $0.05/day cap.
+  - Acceptance: the cap check becomes atomic with the reservation. Reserve
+    FIRST, then re-read the scoped total (which now includes this
+    reservation, since `getDailySpend` and `getMonthlySpend` both count
+    `reserved` rows), and if the total exceeds the cap, refund the
+    reservation and return 429 without calling OpenAI. Two concurrent
+    requests that together fit under the cap both proceed; two that don't
+    are both rejected and both refunded. Over-rejection is acceptable,
+    overspend is not. No new migration and no stored procedure — reuses the
+    existing `reserve`/`refund` pair.
+  - Verify: `npm test` — unit tests cover an under-cap request proceeding,
+    a reservation that pushes the total over the cap being refunded and
+    429ing, and the refund actually firing on that path.
+    DONE — verified 2026-10-20. `tests/draftBrief.route.test.ts` adds 10
+    cases, including an explicit ordering assertion that `reserve` is
+    invoked before any cap read (that assertion IS the fix; if it ever
+    flips, the race is back). Needed one piece of infrastructure: vitest
+    doesn't read tsconfig paths, so `vitest.config.mts` now mirrors the
+    `@/*` alias.
+  - Files: `app/api/ai/draft-brief/route.ts`,
+    `tests/draftBrief.route.test.ts`, `vitest.config.mts`
+  - Dependencies: none
+
+- [ ] Task: Ratify the per-user cap numbers
+  - Why: `DAILY_USER_CAP_USD` at $0.05 and `MONTHLY_USER_CAP_USD` at $0.25
+    are hardcoded in the route and appear in neither SPEC.md nor plan.md.
+    plan.md commits to "per-user daily/monthly dollar quotas" without
+    figures. SPEC.md lists quota changes under "Ask first," so these are
+    an unratified guess sitting in the money path.
+  - Acceptance: the founder confirms or changes both numbers, and the
+    agreed values are written into SPEC.md's Slice 1 spend-controls section
+    so the code implements a decision rather than defining one.
+  - Note: the nano switch below changed what these buy. Worst case per call
+    is now about $0.0043 (15k input at $0.20/M plus 1024 output at
+    $1.25/M), down from about $0.016 on mini. So $0.05/day is roughly 11
+    calls and $0.25/month is roughly 58 — decide against those numbers, not
+    the old ones.
+  - Verify: the two constants in the route match the two numbers in
+    SPEC.md.
+  - Files: `SPEC.md`, `app/api/ai/draft-brief/route.ts`
+  - Dependencies: none, but blocks Checkpoint E
+
+- [x] Task: Switch draft-brief to the cheapest model
+  - Why: founder's explicit call on 2026-10-20 — keep running cost as low
+    as possible.
+  - Acceptance: `MODEL` is `gpt-5.4-nano`, and `PRICE_PER_MILLION_INPUT`
+    and `PRICE_PER_MILLION_OUTPUT` move with it ($0.20 and $1.25). These
+    three MUST change together: `lib/llm/budget.ts` reserves and settles
+    against the price constants, so a model swap without a price swap
+    silently mis-bills the ledger and every cap derived from it.
+  - Verify: `npm test` — the request-shape test now asserts against the
+    exported `MODEL` constant rather than a hardcoded literal, so a
+    deliberate swap stops reading as a test failure. DONE — 2026-10-20.
+  - Files: `lib/llm/openai.ts`, `tests/openai.test.ts`
+
+- [ ] Task: Amend SPEC.md's model-routing rule to match the nano switch
+  - Why: SPEC.md's Tech Stack says "`gpt-5.4-nano` for structured/cheap
+    tasks, `gpt-5.4-mini` for prose." `draft-brief` writes prose and now
+    runs on nano, so the code and the spec disagree. One of them has to
+    move, and the founder has already chosen the code's side.
+  - Acceptance: the Tech Stack line reflects nano-first with mini as the
+    escape hatch if brief quality proves too weak; the reasoning is
+    recorded so a later reader doesn't "fix" it back to mini.
+  - Verify: no routing rule in SPEC.md contradicts `MODEL`.
+  - Files: `SPEC.md`
+  - Dependencies: none, but pairs with the quality judgement in the live
+    AI draft happy-path verification below
+
+- [ ] Task: Retire BYOK from the written record
+  - Acceptance: SPEC.md's "AI draft assist (addendum)" no longer describes
+    the Anthropic key path as live — it currently says "still live until
+    the replacement ships," and the replacement has now shipped. Its five
+    addendum Success Criteria are either struck or restated against the
+    proxy. DESIGN.md's "API key — a settings affordance" bullet and the
+    `Key` icon spec are removed, and its "No key set" bullet is restated as
+    the signed-out case. The Tech Stack BYOK line is marked retired.
+  - Verify: no doc describes a UI element that no longer exists; grepping
+    for "Anthropic API key" returns nothing outside historical-record prose.
+  - Files: `SPEC.md`, `DESIGN.md`
+  - Dependencies: the rewire task above, which is done
+  - Note: these sections are ceo- and product-manager-owned. This task is
+    cleanup to match shipped reality, not a scope change.
+
+- [ ] Task: Live auth verification pass
+  - Acceptance: against a real Supabase project with Google OAuth
+    configured — sign-in with Google succeeds, the session survives a
+    reload, sign-out works, and a signed-out visitor still gets the full v0
+    app (local graph, create, link, export, zero setup, no AI).
+  - Verify: manual, in a browser. Covers SPEC.md Slice 1 criteria 1 and 2.
+  - Files: none; verification only, and any fix lands in its owning file
+  - Dependencies: `.env.local` populated, migration applied
+
+- [ ] Task: Live AI draft happy-path verification
+  - Acceptance: signed in, with no API key anywhere in the browser,
+    "Draft with AI" returns a synthesized first-person brief; the result
+    block renders with Copy and dismiss; dismissing leaves the selection
+    intact; raw export still works alongside it.
+  - Verify: manual. Covers SPEC.md Slice 1 criterion 3.
+  - Dependencies: live auth verification
+
+- [ ] Task: Live spend-control verification
+  - Acceptance: with the per-user caps temporarily lowered to a near-zero
+    value, a second draft attempt returns the quota message and makes no
+    OpenAI call; with the global cap lowered, AI is disabled for everyone
+    and raw export keeps working; with `AI_KILL_SWITCH` set, every draft
+    attempt 503s immediately; a single call's recorded cost never exceeds
+    the per-call bound.
+  - Verify: manual, reading `usage_ledger` rows after each attempt. Covers
+    SPEC.md Slice 1 criteria 4, 5, 6 and 7.
+  - Dependencies: live AI draft happy-path verification, and the
+    quota-race fix — criterion 5 cannot honestly pass until that lands
+
+- [ ] Task: Content-leak verification
+  - Acceptance: after a real "Draft with AI" call, no persona node content
+    appears in server stdout, in any error report, or in any `usage_ledger`
+    row — confirmed by reading the actual output, not by code inspection.
+    Code inspection already looks clean: `lib/log.ts`'s entry type has no
+    field that could hold content, and the ledger table has no content
+    column. The spec asks for the empirical check anyway, and that is
+    precisely the point of the criterion.
+  - Verify: manual, reading dev-server or Vercel logs and a `select *` over
+    the ledger. Covers SPEC.md Slice 1 criterion 8.
+  - Dependencies: live AI draft happy-path verification
+
+- [ ] Task: Account-deletion and privacy-policy verification
+  - Acceptance: deleting an account removes its auth user and its
+    `usage_ledger` rows — the table's `on delete cascade` should handle the
+    ledger, so confirm it actually fires rather than assuming. The privacy
+    policy naming OpenAI as a processor is reachable and live before the
+    sign-in button is exposed publicly.
+  - Verify: manual — delete a test account, then query the ledger for its
+    user id and confirm zero rows. Covers SPEC.md Slice 1 criteria 9 and 10.
+  - Dependencies: live auth verification
+
+### Checkpoint E — Slice 1 ship
+- [ ] All ten Slice 1 Success Criteria in SPEC.md checked off by hand
+- [ ] `npm test`, `npm run lint` and `npm run build` pass
+- [x] Quota race closed and covered by a test
+- [ ] Per-user cap numbers ratified in SPEC.md and matching the code
+- [ ] No doc describes the retired BYOK UI as live
+- [ ] code-reviewer pass over the whole Slice 1 diff, with the money path
+      (reserve, settle, refund, and the three cap checks) read line by line
+
+## Phase 7: AI node drafting — NOT STARTED, needs its own spec
+
+`ai-node-drafting` is capability-map module 6, listed in SPEC.md's
+Boundaries under "Ask first." The founder has given the go-ahead and
+resolved SPEC.md Open Question 3 in favour of the interview form over a
+chat thread, which is what plan.md recommended and which avoids amending
+DESIGN.md's no-chat-bubbles rule.
+
+Settled so far:
+- Entry point: after the title field in `NodeEditor`, two options — write
+  it yourself, or let AI ask questions.
+- Shape: an interview form, not a chat thread. Three to five open questions
+  as labelled fields, then a second call drafts the body as editable text.
+
+Still open, and blocking the spec:
+- Whether the questions are free-text only (recommended) or include any
+  closed or multiple-choice fields.
+- Whether voice input is in the first version, and if so whether via the
+  browser's built-in speech recognition (free, no server, but unsupported
+  in Firefox) or a server-side transcription API (costs money, and needs
+  its own fixed task endpoint plus budget plumbing through
+  `lib/llm/budget.ts`).
+
+No tasks are written until those are decided and a spec exists.

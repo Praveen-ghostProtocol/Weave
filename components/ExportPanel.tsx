@@ -3,12 +3,10 @@
 // Export sidebar (DESIGN.md §4 "Export sidebar"): checkbox list of nodes,
 // a live char/token counter, and a copy-to-clipboard export button.
 // Self-contained — reads from useGraph() directly, no props.
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Key } from "@phosphor-icons/react";
+import { useMemo, useRef, useState } from "react";
 import { useGraph } from "@/lib/storage/useGraph";
+import { useSession } from "@/lib/supabase/useSession";
 import { exportContext } from "@/lib/graph/export";
-import { clearApiKey, getApiKey, hasApiKey, setApiKey } from "@/lib/storage/apiKey";
-import { draftContext, DraftContextError } from "@/lib/llm/anthropic";
 
 export default function ExportPanel() {
   const { graph } = useGraph();
@@ -20,27 +18,16 @@ export default function ExportPanel() {
   const [copiedMarkdown, setCopiedMarkdown] = useState<string | null>(null);
   const [copyError, setCopyError] = useState(false);
 
-  // API key settings row (DESIGN.md "Export sidebar — AI draft assist"):
-  // collapsed by default, never prefilled with the real stored key — the
-  // icon's tint/label is the only place "key set" status shows.
-  const [keySet, setKeySet] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [keyInput, setKeyInput] = useState("");
-  const keyInputRef = useRef<HTMLInputElement>(null);
-
-  // hasApiKey() reads localStorage, unavailable during SSR. Read it after
-  // mount, inside a microtask callback rather than synchronously in the
-  // effect body — same async-boundary shape useGraph's Dexie load uses,
-  // which the react-hooks set-state-in-effect lint rule requires.
-  useEffect(() => {
-    Promise.resolve().then(() => setKeySet(hasApiKey()));
-  }, []);
-
-  // Focus the key input whenever the settings row opens — covers both the
-  // icon toggle and "Draft with AI"'s no-key redirect below.
-  useEffect(() => {
-    if (settingsOpen) keyInputRef.current?.focus();
-  }, [settingsOpen]);
+  // Drafting is server-side now (app/api/ai/draft-brief): signed-in users
+  // only, the OpenAI key never leaves the server. The old bring-your-own-key
+  // settings row went with it — there is nothing left for the user to
+  // configure, so the Key icon affordance in DESIGN.md's addendum no longer
+  // has a job.
+  const { user, loading: sessionLoading } = useSession();
+  // Clicking "Draft with AI" while signed out is a discoverable state, not
+  // a failure — same reasoning as DESIGN.md's "No key set" rule — so it
+  // gets its own inline prompt instead of the button's error treatment.
+  const [signInPrompt, setSignInPrompt] = useState(false);
 
   // "Draft with AI" (DESIGN.md "AI draft assist"): same idiom as the export
   // button's copy/copyError label-swap, one more state (loading/error) and
@@ -52,22 +39,10 @@ export default function ExportPanel() {
   // Synchronous guard against a double-submit: the button's own `disabled`
   // relies on React having committed "loading" state before a second click
   // lands, which is timing, not a lock. A fast or synthetic double-click can
-  // still beat that and fire two concurrent requests against the user's
-  // paid API key.
+  // still beat that and fire two concurrent requests — now billed to the
+  // founder's OpenAI key, and each one reserves budget against the user's
+  // quota, so this matters more than it did under BYOK.
   const draftInFlightRef = useRef(false);
-
-  function saveKey() {
-    setApiKey(keyInput);
-    setKeySet(hasApiKey());
-    setKeyInput("");
-    setSettingsOpen(false);
-  }
-
-  function handleClearKey() {
-    clearApiKey();
-    setKeySet(false);
-    setKeyInput("");
-  }
 
   // selectedIds can retain the id of a node deleted elsewhere (e.g. via
   // NodeEditor); filter at read time rather than pruning the Set in an
@@ -87,21 +62,61 @@ export default function ExportPanel() {
 
   async function handleDraft() {
     if (!result) return;
-    if (!hasApiKey()) {
-      setSettingsOpen(true);
+    // Signed out: prompt instead of firing a request the server would
+    // reject anyway. While the session is still loading we let the request
+    // go and handle a 401 below, rather than guessing from an unsettled
+    // `user`. The server checks auth itself — this is UX, not the gate.
+    if (!sessionLoading && !user) {
+      setSignInPrompt(true);
+      setDraftStatus("idle");
+      setDraftError(null);
       return;
     }
     if (draftInFlightRef.current) return;
     draftInFlightRef.current = true;
+    setSignInPrompt(false);
     setDraftStatus("loading");
     setDraftError(null);
     try {
-      const text = await draftContext(result.markdown, getApiKey() ?? "");
-      setDraftResult(text);
+      const res = await fetch("/api/ai/draft-brief", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markdown: result.markdown }),
+      });
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        // 401 means the session lapsed mid-visit. Same discoverable prompt
+        // as never having signed in, not a red "draft failed" button.
+        if (res.status === 401) {
+          setSignInPrompt(true);
+          setDraftStatus("idle");
+          return;
+        }
+        // The route already words every failure for a human (quota spent,
+        // monthly cap reached, AI paused, upstream unreachable). Show its
+        // message rather than re-deriving one from the status code here —
+        // one place owns the wording, and it's the place that knows why.
+        setDraftError(
+          typeof body?.error === "string" ? body.error : "Something went wrong drafting with AI.",
+        );
+        setDraftStatus("error");
+        return;
+      }
+
+      if (typeof body?.text !== "string") {
+        setDraftError("The AI service returned an unexpected response.");
+        setDraftStatus("error");
+        return;
+      }
+
+      setDraftResult(body.text);
       setDraftCopied(false);
       setDraftStatus("idle");
-    } catch (err) {
-      setDraftError(err instanceof DraftContextError ? err.message : "Something went wrong drafting with AI.");
+    } catch {
+      // fetch itself rejected — offline, DNS, request blocked. Distinct
+      // from the route's own 502, which means it reached us but not OpenAI.
+      setDraftError("Could not reach Weave. Check your connection and try again.");
       setDraftStatus("error");
     } finally {
       draftInFlightRef.current = false;
@@ -169,71 +184,23 @@ export default function ExportPanel() {
           ~{(result?.markdown.length ?? 0).toLocaleString()} characters / ~
           {(result?.estimate ?? 0).toLocaleString()} tokens
         </p>
-        <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={selectAll}
-              className="text-[var(--accent)] underline-offset-2 hover:underline"
-            >
-              Select all
-            </button>
-            <button
-              type="button"
-              onClick={selectNone}
-              className="text-[var(--accent)] underline-offset-2 hover:underline"
-            >
-              Select none
-            </button>
-          </div>
+        <div className="mt-2 flex items-center gap-3 text-sm">
           <button
             type="button"
-            onClick={() => setSettingsOpen((open) => !open)}
-            aria-label={keySet ? "API key set" : "No API key set"}
-            title={keySet ? "API key set" : "No API key set"}
-            className={`rounded-[6px] p-1 transition-transform active:scale-[0.98] ${
-              keySet ? "text-[var(--accent)]" : "text-[var(--ink-muted)]"
-            }`}
+            onClick={selectAll}
+            className="text-[var(--accent)] underline-offset-2 hover:underline"
           >
-            <Key size={16} weight="regular" />
+            Select all
+          </button>
+          <button
+            type="button"
+            onClick={selectNone}
+            className="text-[var(--accent)] underline-offset-2 hover:underline"
+          >
+            Select none
           </button>
         </div>
       </div>
-
-      {settingsOpen && (
-        <div className="border-b border-[var(--line)] p-4">
-          <label className="block text-sm text-[var(--ink)]">
-            Anthropic API key
-            <input
-              ref={keyInputRef}
-              type="password"
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-              autoComplete="off"
-              className="mt-2 w-full rounded-[6px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-            />
-          </label>
-          <p className="mt-2 text-[12px] text-[var(--ink-muted)]">
-            Stored only in this browser. Used only to call Anthropic directly.
-          </p>
-          <div className="mt-3 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={saveKey}
-              className="rounded-[6px] bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-[var(--surface)] transition-transform active:scale-[0.98]"
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={handleClearKey}
-              className="text-sm text-[var(--accent)] underline-offset-2 hover:underline"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
 
       <ul className="flex-1 overflow-y-auto p-2">
         {graph.nodes.map((node) => (
@@ -308,6 +275,14 @@ export default function ExportPanel() {
         {draftStatus === "error" && draftError && (
           <p role="alert" aria-live="polite" className="text-[12px] text-[var(--danger)]">
             {draftError}
+          </p>
+        )}
+        {signInPrompt && (
+          <p role="status" aria-live="polite" className="text-[12px] text-[var(--ink-muted)]">
+            <a href="/login" className="text-[var(--accent)] underline underline-offset-2">
+              Sign in
+            </a>{" "}
+            to draft with AI. Export selection works without an account.
           </p>
         )}
       </div>

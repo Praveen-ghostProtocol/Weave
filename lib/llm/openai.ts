@@ -14,12 +14,15 @@
 //   recommend Responses for all new projects (developers.openai.com/api/docs
 //   /guides/migrate-to-responses); Chat Completions stays supported but isn't
 //   the current recommendation.
-// - Model gpt-5.4-mini's reasoning.effort supports: none (default), low,
-//   medium, high, xhigh (developers.openai.com/docs/models/gpt-5.4-mini).
-//   "none" is both the lowest accepted value and the default — set
-//   explicitly anyway per plan.md's "every call must set the lowest
-//   reasoning effort" rule, so a future default change can't silently
-//   regress cost.
+// - reasoning.effort supports: none (default), low, medium, high, xhigh.
+//   Verified for gpt-5.4-mini against OpenAI's model page on 2026-10-20;
+//   for gpt-5.4-nano (the model actually in use, see MODEL below) the same
+//   range was corroborated only against third-party model listings, not
+//   OpenAI's own page — worth confirming on the first live call, since a
+//   rejected effort value surfaces as a 400. "none" is both the lowest
+//   accepted value and the default — set explicitly anyway per plan.md's
+//   "every call must set the lowest reasoning effort" rule, so a future
+//   default change can't silently regress cost.
 // - max_output_tokens caps reasoning + visible output combined
 //   (developers.openai.com/api/docs/guides/reasoning) — the hard cost cap
 //   plan.md requires.
@@ -45,8 +48,24 @@ export class DraftBriefError extends Error {
   }
 }
 
-const MODEL = "gpt-5.4-mini";
-const MAX_OUTPUT_TOKENS = 1024; // hard cap; plan.md estimates ~500 for this task
+// nano, not mini — founder's explicit call on 2026-10-20: keep running
+// cost as low as possible. Note this departs from SPEC.md's Tech Stack
+// routing rule ("nano for structured/cheap tasks, mini for prose"), and
+// draft-brief is prose, so that line needs amending to match. The tradeoff
+// is blander output; it's one constant to revert if the briefs read badly,
+// and the live verification pass is where that gets judged.
+export const MODEL = "gpt-5.4-nano";
+export const MAX_OUTPUT_TOKENS = 1024; // hard cap; plan.md estimates ~500 for this task
+
+// gpt-5.4-nano per-million pricing. Matches tasks/plan.md's cost reference
+// table (developers.openai.com/api/docs/pricing, fetched 2026-10-18) and
+// corroborated against third-party model listings on 2026-10-20 — pricing
+// moves fast, so re-check before trusting these. MUST be kept in step with
+// MODEL above: lib/llm/budget.ts reserves and settles against these
+// numbers, so a model swap without a price swap silently mis-bills the
+// ledger and every cap derived from it.
+export const PRICE_PER_MILLION_INPUT = 0.2;
+export const PRICE_PER_MILLION_OUTPUT = 1.25;
 
 const SYSTEM_PROMPT =
   "You turn a user's persona notes into context for pasting into another AI " +

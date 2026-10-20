@@ -18,7 +18,7 @@ vi.mock("../lib/log", () => ({
   logUsage: logUsageMock,
 }));
 
-import { getMonthlySpend, isKillSwitchActive, reserve, refund, settle } from "../lib/llm/budget";
+import { getDailySpend, getMonthlySpend, isKillSwitchActive, reserve, refund, settle } from "../lib/llm/budget";
 
 // A chainable stub standing in for a PostgREST query builder: every filter
 // method returns itself, `.single()` resolves the configured result, and
@@ -179,6 +179,27 @@ describe("getMonthlySpend", () => {
   it("throws if the query errors", async () => {
     fromMock.mockReturnValue(makeQueryBuilder({ data: null, error: { message: "query failed" } }));
     await expect(getMonthlySpend({})).rejects.toThrow(/query failed/);
+  });
+});
+
+describe("getDailySpend", () => {
+  it("sums cost_usd excluding refunded rows, scoped to the given user and day", async () => {
+    const builder = makeQueryBuilder({
+      data: [{ cost_usd: 0.01 }, { cost_usd: 0.02 }],
+      error: null,
+    });
+    fromMock.mockReturnValue(builder);
+
+    const total = await getDailySpend("user-1");
+
+    expect(builder.neq).toHaveBeenCalledWith("status", "refunded");
+    expect(builder.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(total).toBeCloseTo(0.03, 9);
+  });
+
+  it("throws if the query errors", async () => {
+    fromMock.mockReturnValue(makeQueryBuilder({ data: null, error: { message: "query failed" } }));
+    await expect(getDailySpend("user-1")).rejects.toThrow(/query failed/);
   });
 });
 

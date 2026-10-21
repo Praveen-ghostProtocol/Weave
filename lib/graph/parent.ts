@@ -97,7 +97,8 @@ export function setParent(
       if (parentId === undefined) {
         // Delete the key rather than setting undefined, so "top level" has
         // one spelling on the way into IndexedDB too.
-        const { parentId: _dropped, ...rest } = n;
+        const rest = { ...n };
+        delete rest.parentId;
         return rest;
       }
       return { ...n, parentId };

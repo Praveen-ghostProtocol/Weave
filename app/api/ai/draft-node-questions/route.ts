@@ -21,45 +21,124 @@ const TASK = "draft-node-questions";
 const MAX_TITLE_CHARS = 200;
 const MAX_DOMAIN_CHARS = 60;
 
-// ~150 tokens of questions is plenty; this cap is what makes call 1 cost
-// roughly a fiftieth of a cent.
-const MAX_OUTPUT_TOKENS = 300;
+// Raised from 300 when questions gained options: the JSON wrapper and the
+// choices themselves need the room. Still a fraction of a cent per call.
+const MAX_OUTPUT_TOKENS = 700;
 
+const MAX_OPTIONS_PER_QUESTION = 5;
+
+// Format first, deliberately. An earlier version explained the questions
+// and mentioned the JSON shape last; the model then wrote a question whose
+// TEXT read 'options: "go for progress," "chill and send,"' instead of
+// filling the options array. It had understood the intent and lost the
+// shape. Leading with a worked example of both question kinds fixed it.
 const QUESTIONS_PROMPT =
+  "Reply with JSON and nothing else. No markdown fence, no preamble, no " +
+  "closing remark. Exactly this shape:\n" +
+  '{"questions":[\n' +
+  '  {"text":"Where do you usually climb?"},\n' +
+  '  {"text":"How often do you go?","options":["Most weekends","Monthly","A few times a year"]}\n' +
+  "]}\n" +
+  "The first kind is a free-text question. The second offers taps. NEVER " +
+  "write the choices inside the question text — they go in the options " +
+  "array or nowhere.\n\n" +
   "The user is writing a short personal note about one part of their life, " +
-  "under the heading they give you. Ask 3 to 5 short questions whose answers " +
-  "would let someone write that note in the user's own voice. " +
-  "Make every question specific to this heading — never generic filler like " +
-  '"what are your responsibilities" or "what are your goals". ' +
-  "Ask about concrete particulars only the user would know: names, routines, " +
-  "specific decisions, what is actually hard about it. " +
+  "under the heading they give you. Ask 3 to 5 short questions whose " +
+  "answers would let someone write that note in the user's own voice. " +
+  "Make every question specific to this heading — never generic filler " +
+  'like "what are your responsibilities" or "what are your goals". ' +
+  "Ask about concrete particulars only the user would know: names, " +
+  "routines, specific decisions, what is actually hard about it. " +
   // A name is not a gender. Live testing with the heading "My manager
   // Dana" had the model write "her" and "she" throughout, inventing a
   // fact about a real person the user never supplied — the same class of
   // error as making up a job title, and more likely to be noticed and
   // resented. These notes get pasted into other AI tools as fact.
-  "Never assume or infer anyone's gender or pronouns from their name. Unless " +
-  "the user has stated them, write about people using they/them, or rephrase " +
-  "to avoid pronouns entirely. " +
-  "You may append a short example answer in parentheses to show the kind of " +
-  "detail wanted. " +
-  "Output one question per line, with no numbering, no bullets, no preamble " +
-  "and no closing remark.";
+  "Never assume or infer anyone's gender or pronouns from their name. " +
+  "Unless the user has stated them, write about people using they/them, " +
+  "or rephrase to avoid pronouns entirely. " +
+  // Typing five free-text answers is what makes this feature tiring in
+  // practice. Options turn the categorical questions into a tap. But they
+  // must not become the default: a question answerable from a list of
+  // guesses returns the bucket the user is in rather than what is true
+  // about them, which is the generic output this feature exists to avoid.
+  "Give options when a question has a small set of genuinely likely " +
+  "answers that would cover most people — frequency, difficulty, mood, " +
+  "style, how long something has been going on. Give NO options for " +
+  "anything asking about a specific name, place, person or event: a " +
+  "guessed list there is worse than an empty box. Aim for a mix. " +
+  "Keep each option under about six words, and give 3 to 5 of them. " +
+  "For a free-text question you may append a short example answer in " +
+  "parentheses to show the kind of detail wanted."
+
+export interface DraftQuestion {
+  text: string;
+  /** Absent means free text. Never an empty array. */
+  options?: string[];
+}
 
 /**
- * Parses the model's reply as plain lines rather than enforcing a JSON
- * schema. A flat array of short strings gains nothing from a schema, costs
- * output tokens on braces and keys, and would add a nano-compatibility
- * unknown. Strips any numbering or bullet the model adds anyway.
+ * Parses the model's reply.
+ *
+ * JSON now, where plain lines were enough before. The shape stopped being a
+ * flat list of strings the moment questions could carry options, and a
+ * delimiter format would have collided with the bullet-stripping this
+ * parser already needed (models add bullets whatever the prompt says).
+ *
+ * Tolerant on the way in, strict on the way out: a fenced block, a bare
+ * array, or a wrapped object all parse, and anything malformed yields
+ * nothing rather than a half-built question. The caller treats fewer than
+ * two questions as an unusable reply.
  */
-export function parseQuestions(text: string): string[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
-    .filter(Boolean)
-    .slice(0, 5);
+export function parseQuestions(text: string): DraftQuestion[] {
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return [];
+  }
+
+  const raw = Array.isArray(parsed)
+    ? parsed
+    : (parsed as { questions?: unknown })?.questions;
+  if (!Array.isArray(raw)) return [];
+
+  const out: DraftQuestion[] = [];
+  for (const item of raw) {
+    // A bare string is still accepted: it is the cheapest possible
+    // degradation if the model forgets the object shape, and a free-text
+    // question is a perfectly good question.
+    if (typeof item === "string") {
+      const t = item.trim();
+      if (t) out.push({ text: t });
+      continue;
+    }
+    const { text: qText, options } = (item ?? {}) as { text?: unknown; options?: unknown };
+    if (typeof qText !== "string" || qText.trim().length === 0) continue;
+
+    const cleanOptions = Array.isArray(options)
+      ? Array.from(
+          new Set(
+            options
+              .filter((o): o is string => typeof o === "string")
+              .map((o) => o.trim())
+              .filter(Boolean)
+          )
+        ).slice(0, MAX_OPTIONS_PER_QUESTION)
+      : [];
+
+    // A single option is not a choice, it is a leading question. Drop back
+    // to free text rather than presenting one chip and an Other box.
+    out.push(
+      cleanOptions.length >= 2
+        ? { text: qText.trim(), options: cleanOptions }
+        : { text: qText.trim() }
+    );
+    if (out.length === 5) break;
+  }
+  return out;
 }
 
 export async function POST(request: Request) {

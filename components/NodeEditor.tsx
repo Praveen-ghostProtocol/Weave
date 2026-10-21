@@ -26,6 +26,12 @@ import {
 import { useGraph } from "@/lib/storage/useGraph";
 import { useSession } from "@/lib/supabase/useSession";
 
+interface DraftQuestion {
+  text: string;
+  /** Absent means free text. Never an empty array. */
+  options?: string[];
+}
+
 interface NodeEditorProps {
   nodeId: string | null;
   onClose: () => void;
@@ -41,6 +47,111 @@ export interface NodeEditorHandle {
 }
 
 type AiStatus = "idle" | "asking" | "drafting" | "error";
+
+/**
+ * One interview question: a row of tappable options with an "Other" escape,
+ * or a plain textarea when the model offered no options.
+ *
+ * The answer is always a single string whichever path produced it, so the
+ * drafting call never needs to know the difference — no second shape to
+ * validate server-side, and nothing breaks if a question comes back in a
+ * different style on a later run.
+ */
+function QuestionField({
+  id,
+  question,
+  value,
+  onChange,
+}: {
+  id: string;
+  question: DraftQuestion;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const options = question.options ?? [];
+  const hasOptions = options.length > 0;
+  // "Other" is on whenever there is an answer that is not one of the
+  // options. Derived rather than stored, so it cannot drift out of step
+  // with the value: picking a chip turns it off by itself.
+  const isOther = hasOptions && value.trim().length > 0 && !options.includes(value);
+  const [otherOpen, setOtherOpen] = useState(false);
+  const showOther = isOther || otherOpen;
+
+  if (!hasOptions) {
+    return (
+      <div className="flex flex-col gap-2">
+        <label htmlFor={id} className="text-sm font-medium leading-snug text-[var(--ink)]">
+          {question.text}
+        </label>
+        <textarea
+          id={id}
+          rows={2}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="resize-none rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2 text-[14px] leading-normal text-[var(--ink)]"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <fieldset className="flex flex-col gap-2">
+      <legend className="text-sm font-medium leading-snug text-[var(--ink)]">
+        {question.text}
+      </legend>
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt) => {
+          const selected = value === opt;
+          return (
+            <button
+              key={opt}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => {
+                // Tapping the chosen chip again clears it. Every answer is
+                // optional, so un-answering has to be reachable.
+                onChange(selected ? "" : opt);
+                setOtherOpen(false);
+              }}
+              className={`rounded-full border px-3 py-1 text-[13px] transition-transform active:scale-[0.98] ${
+                selected
+                  ? "border-[var(--accent)] text-[var(--accent)]"
+                  : "border-[var(--line)] text-[var(--ink)]"
+              }`}
+            >
+              {opt}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          aria-pressed={showOther}
+          onClick={() => {
+            onChange("");
+            setOtherOpen(!showOther);
+          }}
+          className={`rounded-full border px-3 py-1 text-[13px] transition-transform active:scale-[0.98] ${
+            showOther
+              ? "border-[var(--accent)] text-[var(--accent)]"
+              : "border-[var(--line)] text-[var(--ink-muted)]"
+          }`}
+        >
+          Other
+        </button>
+      </div>
+      {showOther && (
+        <textarea
+          id={id}
+          rows={2}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="In your own words"
+          className="resize-none rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2 text-[14px] leading-normal text-[var(--ink)]"
+        />
+      )}
+    </fieldset>
+  );
+}
 
 const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEditor(
   { nodeId, onClose },
@@ -70,7 +181,11 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   // Interview mode replaces the Notes region in place (same panel, same
   // width) rather than opening a modal or a second panel — identical
   // reasoning to the export sidebar's result block.
-  const [questions, setQuestions] = useState<string[] | null>(null);
+  // A question is either a free-text box or a small set of taps with an
+  // "Other" escape. Typing five long answers was what made this feature
+  // tiring in real use; options turn the categorical ones into a tap
+  // without letting the whole interview collapse into guessed buckets.
+  const [questions, setQuestions] = useState<DraftQuestion[] | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [aiStatus, setAiStatus] = useState<AiStatus>("idle");
   const [aiError, setAiError] = useState<string | null>(null);
@@ -177,7 +292,7 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   }
 
   async function startInterview() {
-    const data = await callAi<{ questions: string[] }>(
+    const data = await callAi<{ questions: DraftQuestion[] }>(
       "/api/ai/draft-node-questions",
       { title: title.trim(), domain: domain.trim() || undefined },
       "asking",
@@ -192,7 +307,7 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
     const payload = {
       title: title.trim(),
       domain: domain.trim() || undefined,
-      answers: questions.map((q, i) => ({ question: q, answer: answers[i] ?? "" })),
+      answers: questions.map((q, i) => ({ question: q.text, answer: answers[i] ?? "" })),
     };
     const data = await callAi<{ text: string }>("/api/ai/draft-node-body", payload, "drafting");
     if (!data || typeof data.text !== "string") return;
@@ -213,7 +328,7 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   function useAnswersAsNotes() {
     if (!questions) return;
     const written = questions
-      .map((q, i) => ({ q, a: (answers[i] ?? "").trim() }))
+      .map((q, i) => ({ q: q.text, a: (answers[i] ?? "").trim() }))
       .filter((pair) => pair.a.length > 0)
       .map((pair) => `**${pair.q}**\n\n${pair.a}`)
       .join("\n\n");
@@ -372,27 +487,19 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
 
           <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
             {questions.map((q, i) => (
-              <div key={i} className="flex flex-col gap-2">
-                <label
-                  htmlFor={`${uid}-q${i}`}
-                  className="text-sm font-medium leading-snug text-[var(--ink)]"
-                >
-                  {q}
-                </label>
-                <textarea
-                  id={`${uid}-q${i}`}
-                  rows={2}
-                  value={answers[i] ?? ""}
-                  onChange={(e) =>
-                    setAnswers((prev) => {
-                      const next = [...prev];
-                      next[i] = e.target.value;
-                      return next;
-                    })
-                  }
-                  className="resize-none rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2 text-[14px] leading-normal text-[var(--ink)]"
-                />
-              </div>
+              <QuestionField
+                key={i}
+                id={`${uid}-q${i}`}
+                question={q}
+                value={answers[i] ?? ""}
+                onChange={(v) =>
+                  setAnswers((prev) => {
+                    const next = [...prev];
+                    next[i] = v;
+                    return next;
+                  })
+                }
+              />
             ))}
           </div>
 

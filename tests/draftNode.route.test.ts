@@ -67,28 +67,69 @@ beforeEach(() => {
   budgetMocks.settle.mockResolvedValue({ costUsd: 0.0001 });
   budgetMocks.refund.mockResolvedValue(undefined);
   callOpenAIMock.mockResolvedValue({
-    text: "What does a normal week look like?\nWho else is involved?\nWhat is hardest about it?",
+    text: JSON.stringify({
+      questions: [
+        { text: "What does a normal week look like?" },
+        { text: "How often do you go?", options: ["Weekly", "Monthly", "Rarely"] },
+        { text: "What is hardest about it?" },
+      ],
+    }),
     inputTokens: 40,
     outputTokens: 30,
   });
 });
 
-// The parser is where a malformed reply turns into a broken screen, and
-// models add numbering and bullets whatever the prompt says.
+// The parser is where a malformed reply turns into a broken screen. It is
+// tolerant on the way in and strict on the way out: anything it cannot
+// fully understand yields nothing rather than a half-built question, and
+// the route treats fewer than two questions as unusable.
 describe("parseQuestions", () => {
-  it("splits lines and strips numbering, bullets and blanks", () => {
-    expect(
-      parseQuestions("1. First?\n\n2) Second?\n- Third?\n* Fourth?\n• Fifth?\n")
-    ).toEqual(["First?", "Second?", "Third?", "Fourth?", "Fifth?"]);
+  const wrapped = JSON.stringify({
+    questions: [
+      { text: "Free text one?" },
+      { text: "Pick one?", options: ["A", "B", "C"] },
+    ],
   });
 
-  it("caps at five even when the model over-delivers", () => {
-    expect(parseQuestions(Array.from({ length: 9 }, (_, i) => `Q${i}?`).join("\n"))).toHaveLength(5);
+  it("parses the wrapped object shape, keeping options only where given", () => {
+    expect(parseQuestions(wrapped)).toEqual([
+      { text: "Free text one?" },
+      { text: "Pick one?", options: ["A", "B", "C"] },
+    ]);
   });
 
-  it("returns nothing usable for empty or whitespace-only output", () => {
+  it("accepts a bare array of strings", () => {
+    // Cheapest possible degradation if the model forgets the object
+    // shape — a free-text question is still a perfectly good question.
+    expect(parseQuestions('["Just a string?"]')).toEqual([{ text: "Just a string?" }]);
+  });
+
+  it("survives a markdown fence around the JSON", () => {
+    expect(parseQuestions("```json\n" + wrapped + "\n```")).toHaveLength(2);
+  });
+
+  it("drops a lone option rather than showing one chip and an Other box", () => {
+    // One option is not a choice, it is a leading question.
+    expect(parseQuestions('[{"text":"Q?","options":["only"]}]')).toEqual([{ text: "Q?" }]);
+  });
+
+  it("trims, de-duplicates and caps options", () => {
+    const r = parseQuestions('[{"text":"Q?","options":["  A ","A","B","C","D","E","F"]}]');
+    expect(r[0].options).toEqual(["A", "B", "C", "D", "E"]);
+  });
+
+  it("caps at five questions even when the model over-delivers", () => {
+    const many = JSON.stringify({
+      questions: Array.from({ length: 9 }, (_, i) => ({ text: `Q${i}?` })),
+    });
+    expect(parseQuestions(many)).toHaveLength(5);
+  });
+
+  it("yields nothing for malformed, empty or contentless output", () => {
     expect(parseQuestions("")).toEqual([]);
-    expect(parseQuestions("   \n\n  \n")).toEqual([]);
+    expect(parseQuestions("not json at all")).toEqual([]);
+    expect(parseQuestions('{"questions":"nope"}')).toEqual([]);
+    expect(parseQuestions('[{"text":"   "}]')).toEqual([]);
   });
 });
 
@@ -97,7 +138,11 @@ describe("POST /api/ai/draft-node-questions", () => {
     const res = await post(questionsPOST, { title: "Grad school", domain: "academics" });
 
     expect(res.status).toBe(200);
-    expect((await res.json()).questions).toHaveLength(3);
+    const payload = await res.json();
+    expect(payload.questions).toHaveLength(3);
+    // Options survive the round trip; free-text questions carry none.
+    expect(payload.questions[1].options).toEqual(["Weekly", "Monthly", "Rarely"]);
+    expect(payload.questions[0].options).toBeUndefined();
     expect(budgetMocks.settle).toHaveBeenCalledOnce();
     expect(budgetMocks.refund).not.toHaveBeenCalled();
   });
@@ -107,6 +152,12 @@ describe("POST /api/ai/draft-node-questions", () => {
 
     const call = callOpenAIMock.mock.calls[0][0];
     expect(call.instructions).toMatch(/Ask 3 to 5 short questions/);
+    // Options stay opt-in per question, never the default: a guessed
+    // list for a name or a place is worse than an empty box. And the
+    // choices must never be smuggled into the question text, which is
+    // what the model did before the format moved to the front.
+    expect(call.instructions).toMatch(/specific name, place, person or event: a/);
+    expect(call.instructions).toMatch(/NEVER write the choices inside the question text/);
     expect(call.instructions).not.toMatch(/ignore everything/);
     expect(call.input).not.toMatch(/ignore everything/);
   });
@@ -135,7 +186,11 @@ describe("POST /api/ai/draft-node-questions", () => {
   it("502s but still settles when the model returns too few questions", async () => {
     // The call happened and is billed, so refunding would be dishonest —
     // but there is nothing usable to show.
-    callOpenAIMock.mockResolvedValue({ text: "Only one?", inputTokens: 10, outputTokens: 5 });
+    callOpenAIMock.mockResolvedValue({
+      text: JSON.stringify({ questions: [{ text: "Only one?" }] }),
+      inputTokens: 10,
+      outputTokens: 5,
+    });
 
     const res = await post(questionsPOST, { title: "Grad school" });
 

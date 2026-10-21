@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BaseEdge,
+  MarkerType,
   EdgeLabelRenderer,
   getBezierPath,
   Handle,
@@ -152,7 +153,57 @@ function PersonaEdgeComponent({
   );
 }
 
-const edgeTypes = { persona: PersonaEdgeComponent };
+
+// Containment, drawn from `parentId` at render time and NEVER stored in
+// graph.edges. Keeping it out of the edge list is what stops it being
+// deletable, exportable as a link, or counted as a one-hop neighbour.
+//
+// react-flow's native container nesting was rejected for this (see
+// plan.md): it makes child positions RELATIVE to the parent, so the
+// meaning of the one field already persisted would change the moment a
+// node gained a parent — a data change disguised as a rendering choice —
+// and a container surface could cover the link remove control's hit area.
+//
+// Distinguished from a link by geometry, not colour: dashed, with an
+// arrowhead at the child end. It never turns --accent, because structure
+// must not look like a link at the exact moment someone is inspecting one.
+function ContainmentEdgeComponent({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerEnd,
+}: EdgeProps) {
+  const [edgePath] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+  return (
+    <BaseEdge
+      id={id}
+      path={edgePath}
+      markerEnd={markerEnd}
+      style={{ stroke: "var(--line)", strokeWidth: 1.5, strokeDasharray: "4 4" }}
+    />
+  );
+}
+
+// Prefix on derived edge ids. onEdgesChange calls unlinkNodes on ANY
+// removal, so without something to recognise these by, a stray removal
+// would fire an unlink for a link that does not exist.
+const CONTAINMENT_PREFIX = "contains:";
+
+const edgeTypes = {
+  persona: PersonaEdgeComponent,
+  containment: ContainmentEdgeComponent,
+};
 
 interface GraphViewProps {
   onNodeClick: (nodeId: string) => void;
@@ -243,6 +294,11 @@ export default function GraphView({ onNodeClick }: GraphViewProps) {
       onEdgesChangeBase(changes);
       for (const change of changes) {
         if (change.type === "remove") {
+          // Containment edges are derived, so there is no link to unlink.
+          // They are already selectable:false and deletable:false; this is
+          // the belt to that braces, because the cost of being wrong is an
+          // unlink firing for an edge that was never in graph.edges.
+          if (change.id.startsWith(CONTAINMENT_PREFIX)) continue;
           const edge = edges.find((e) => e.id === change.id);
           if (edge) unlinkNodes(edge.source, edge.target);
         }
@@ -270,15 +326,36 @@ export default function GraphView({ onNodeClick }: GraphViewProps) {
     () => new Set(nodes.filter((n) => n.selected).map((n) => n.id)),
     [nodes]
   );
-  const displayEdges = useMemo(
+  // Derived fresh from the graph every render. Not held in `edges` state,
+  // so nothing can select, delete or persist one.
+  const containmentEdges = useMemo<Edge[]>(
     () =>
-      edges.map((e) => ({
+      graph.nodes
+        .filter((n) => n.parentId)
+        .map((n) => ({
+          id: `${CONTAINMENT_PREFIX}${n.parentId}->${n.id}`,
+          type: "containment",
+          source: n.parentId as string,
+          target: n.id,
+          selectable: false,
+          deletable: false,
+          focusable: false,
+          markerEnd: { type: MarkerType.ArrowClosed, color: "var(--line)", width: 14, height: 14 },
+        })),
+    [graph.nodes]
+  );
+
+  const displayEdges = useMemo(
+    () => [
+      ...containmentEdges,
+      ...edges.map((e) => ({
         ...e,
         data: {
           highlighted: selectedNodeIds.has(e.source) || selectedNodeIds.has(e.target),
         },
       })),
-    [edges, selectedNodeIds]
+    ],
+    [containmentEdges, edges, selectedNodeIds]
   );
 
   return (

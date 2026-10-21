@@ -19,6 +19,7 @@ import type { PersonaGraph, PersonaNode } from "@/lib/graph/types";
 import { linkNodes } from "@/lib/graph/linkNodes";
 import { unlinkNodes } from "@/lib/graph/unlinkNodes";
 import { deleteNode as deleteNodeFromGraph } from "@/lib/graph/deleteNode";
+import { setParent as setParentInGraph } from "@/lib/graph/parent";
 import { loadGraph, saveGraph } from "./db";
 
 const EMPTY_GRAPH: PersonaGraph = { nodes: [], edges: [] };
@@ -27,7 +28,19 @@ interface GraphContextValue {
   graph: PersonaGraph;
   loading: boolean;
   addNode: (node: Omit<PersonaNode, "id">) => void;
-  updateNode: (id: string, patch: Partial<Omit<PersonaNode, "id">>) => void;
+  /**
+   * parentId is excluded ON PURPOSE. Without that exclusion this method
+   * would accept it the moment the field exists on PersonaNode, and the
+   * editor could write the exact cycle lib/graph/parent.ts's guard is
+   * there to prevent. A cycle persists into IndexedDB and spins the main
+   * thread on every render, so the graph becomes permanently unopenable
+   * with no UI left to repair it. Containment moves through setParent,
+   * and the type is what enforces that rather than a comment saying "do
+   * not".
+   */
+  updateNode: (id: string, patch: Partial<Omit<PersonaNode, "id" | "parentId">>) => void;
+  /** Throws on a cycle or a self-parent; no-ops on unknown ids. */
+  setParent: (id: string, parentId: string | undefined) => void;
   deleteNode: (id: string) => void;
   linkNodes: (fromId: string, toId: string) => void;
   unlinkNodes: (fromId: string, toId: string) => void;
@@ -86,6 +99,7 @@ export function GraphProvider({ children }: { children: ReactNode }) {
         ...prev,
         nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
       })),
+    setParent: (id, parentId) => persist((prev) => setParentInGraph(prev, id, parentId)),
     deleteNode: (id) => persist((prev) => deleteNodeFromGraph(prev, id)),
     linkNodes: (fromId, toId) => persist((prev) => linkNodes(prev, fromId, toId)),
     unlinkNodes: (fromId, toId) => persist((prev) => unlinkNodes(prev, fromId, toId)),

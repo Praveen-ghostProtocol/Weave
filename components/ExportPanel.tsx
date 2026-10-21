@@ -7,6 +7,7 @@ import { useMemo, useRef, useState } from "react";
 import { useGraph } from "@/lib/storage/useGraph";
 import { useSession } from "@/lib/supabase/useSession";
 import { exportContext } from "@/lib/graph/export";
+import { getAncestorIds, getDescendants } from "@/lib/graph/parent";
 
 export default function ExportPanel() {
   const { graph } = useGraph();
@@ -140,11 +141,22 @@ export default function ExportPanel() {
     setDraftError(null);
   }
 
+  // Ticking a parent ticks everything under it, and unticking it unticks
+  // them. Founder's call, and their framing is what makes it safe: the
+  // sub-nodes GET SELECTED, visibly, rather than being appended silently
+  // at export time. So the list keeps showing exactly what will go out and
+  // the character counter keeps matching it.
+  //
+  // Deliberately not done inside exportContext: a function that re-added
+  // descendants would make unticking a single child do nothing, and
+  // "everything under Academics except that one module" has to stay
+  // expressible. A child remains independently toggleable afterwards.
   function toggle(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const subtree = [id, ...getDescendants(graph, id)];
+      if (next.has(id)) for (const n of subtree) next.delete(n);
+      else for (const n of subtree) next.add(n);
       return next;
     });
     setCopyError(false);
@@ -205,7 +217,12 @@ export default function ExportPanel() {
       <ul className="flex-1 overflow-y-auto p-2">
         {graph.nodes.map((node) => (
           <li key={node.id}>
-            <label className="flex items-center gap-2 rounded-[6px] px-2 py-2 text-sm text-[var(--ink)] hover:bg-[var(--surface)]">
+            <label
+              className="flex items-center gap-2 rounded-[6px] px-2 py-2 text-sm text-[var(--ink)] hover:bg-[var(--surface)]"
+              // Depth as padding, not a tree widget. Without it a parent
+              // tick appearing to check unrelated rows reads as a bug.
+              style={{ paddingLeft: `${8 + getAncestorIds(graph, node.id).length * 14}px` }}
+            >
               <input
                 type="checkbox"
                 className="accent-[var(--accent)]"

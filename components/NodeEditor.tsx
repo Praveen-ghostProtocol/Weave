@@ -23,6 +23,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { getDescendants } from "@/lib/graph/parent";
 import { useGraph } from "@/lib/storage/useGraph";
 import { useSession } from "@/lib/supabase/useSession";
 
@@ -157,7 +158,7 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   { nodeId, onClose },
   ref,
 ) {
-  const { graph, addNode, updateNode, deleteNode } = useGraph();
+  const { graph, addNode, updateNode, deleteNode, setParent } = useGraph();
   const { user, loading: sessionLoading } = useSession();
   const existing = nodeId ? graph.nodes.find((n) => n.id === nodeId) ?? null : null;
 
@@ -176,6 +177,7 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   const [title, setTitle] = useState(existing?.title ?? "");
   const [domain, setDomain] = useState(existing?.domain ?? "");
   const [body, setBody] = useState(existing?.body ?? "");
+  const [parentId, setParentId] = useState<string>(existing?.parentId ?? "");
 
   // --- AI drafting assist state ---
   // Interview mode replaces the Notes region in place (same panel, same
@@ -205,6 +207,7 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   const titleId = `${uid}-title`;
   const domainId = `${uid}-domain`;
   const domainListId = `${uid}-domainlist`;
+  const parentSelectId = `${uid}-parent`;
   const bodyId = `${uid}-body`;
 
   // Previously-used domain tags for the <datalist> autocomplete (DESIGN.md's
@@ -217,6 +220,17 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
     return Array.from(set).sort();
   }, [graph.nodes]);
 
+  // Candidate parents: every node except this one and its own
+  // descendants, so a cycle cannot be picked. setParent still throws on
+  // one anyway — the UI is UX, not the gate.
+  const parentOptions = useMemo(() => {
+    const excluded = new Set<string>(nodeId ? [nodeId, ...getDescendants(graph, nodeId)] : []);
+    return graph.nodes
+      .filter((n) => !excluded.has(n.id))
+      .map((n) => ({ id: n.id, title: n.title || "Untitled" }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [graph, nodeId]);
+
   // Gates the "Title is required" message so it doesn't scold the user the
   // instant a blank new-node form opens, before they've touched anything —
   // shown once they've left the field or tried to save, not on mount.
@@ -228,6 +242,7 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
     title !== (existing?.title ?? "") ||
     domain !== (existing?.domain ?? "") ||
     body !== (existing?.body ?? "") ||
+    parentId !== (existing?.parentId ?? "") ||
     // Typed answers and an unplaced draft are unsaved work too — without
     // these, switching nodes mid-interview discards them with no warning.
     answers.some((a) => a.trim().length > 0) ||
@@ -352,13 +367,22 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
     const payload = { title: title.trim(), domain: domain.trim(), body };
     if (nodeId) {
       updateNode(nodeId, payload);
+      // Containment is a separate call because updateNode cannot carry it
+      // — see GraphContextValue. setParent no-ops when nothing moved.
+      setParent(nodeId, parentId || undefined);
     } else {
       // Small random offset, not a fixed {0,0} — several new nodes added
       // back-to-back before any drag would otherwise stack exactly on top
       // of each other (and their connection handles with them).
+      // A new child spawns near its parent rather than anywhere on the
+      // canvas, so the relationship is visible without hunting for it.
+      const parent = parentId ? graph.nodes.find((n) => n.id === parentId) : undefined;
       addNode({
         ...payload,
-        position: { x: Math.random() * 200, y: Math.random() * 200 },
+        ...(parentId ? { parentId } : {}),
+        position: parent
+          ? { x: parent.position.x + 40 + Math.random() * 40, y: parent.position.y + 140 }
+          : { x: Math.random() * 200, y: Math.random() * 200 },
       });
     }
     onClose();
@@ -466,6 +490,33 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
           ))}
         </datalist>
       </div>
+
+      {/* Containment. A native select on purpose: this panel's budget is
+          spent on STATES, not rows — it already carries interview mode, a
+          proposed-draft block, a sign-in prompt, two AI error paths and an
+          in-flight guard. A select adds no async, no loading, no error and
+          nothing that interacts with any of those. A combobox or tree
+          picker would. */}
+      {parentOptions.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <label htmlFor={parentSelectId} className="text-sm font-medium text-[var(--ink)]">
+            Part of
+          </label>
+          <select
+            id={parentSelectId}
+            value={parentId}
+            onChange={(e) => setParentId(e.target.value)}
+            className="rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2 text-[14px] text-[var(--ink)]"
+          >
+            <option value="">Nothing — top level</option>
+            {parentOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.title}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {inInterview ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2">

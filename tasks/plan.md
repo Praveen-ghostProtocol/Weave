@@ -234,9 +234,9 @@ OAuth only, BYOK retired, guest mode kept, persona data stays local).
 | 1 | `platform-backend` | Next.js stops being static: route handlers, Postgres (accounts/sessions/usage ledger only), server-only secrets, migrations, error logging that never records content | none (root) | S | **Slice 1 — building now** |
 | 2 | `auth` | Accounts, sessions, Google OAuth sign-in/out, account deletion, guest mode preserved, per-user isolation via Supabase row-level security | platform-backend | M | **Slice 1 — building now** |
 | 3 | `llm-proxy` | All OpenAI calls server-side: fixed task endpoints only (no free-form prompt from client), per-task model routing (nano/mini), reserve-then-settle dollar ledger, rate limits, $20/mo global cap, kill switch. Existing "Draft with AI" moves onto it | platform-backend, auth | M–L | **Slice 1 — building now** |
-| 4 | `sub-nodes` | Optional `parentId` on PersonaNode, tree invariants (single parent, no cycles), delete = re-parent children (not cascade), editor + canvas support | none (pure `lib/graph/types.ts` change, no backend needed) | M | Slice 2 (can start anytime, independent of Slice 1) |
+| 4 | `sub-nodes` | Optional `parentId` on PersonaNode, tree invariants (single parent, no cycles), delete = re-parent children (not cascade), editor + canvas support | none (pure `lib/graph/types.ts` change, no backend needed) | M | **Slice 2 — decided and broken down 2026-10-21 (section below, tasks in todo.md Phase 8). Not built. Needs a `sub-nodes` go-ahead recorded in SPEC.md first — Boundaries puts this module under "Ask first"** |
 | 5 | `ai-export-selection` | User states a purpose; AI returns relevant node ids + a one-line reason each (structured output, validated against the real graph — hallucinated ids dropped); pre-checks the existing checkbox list | llm-proxy | S | Slice 2 |
-| 6 | `ai-node-drafting` | User enters a title; AI asks 3–5 follow-up questions as form fields (interview form, not a chat thread — see Open Question 3); a second call drafts the body into the existing textarea, unsaved, for the user to edit | llm-proxy (soft: sub-nodes, if it suggests a parent) | M | Slice 3 |
+| 6 | `ai-node-drafting` | User enters a title; AI asks 3–5 follow-up questions as form fields (interview form, not a chat thread — see Open Question 3); a second call drafts the body into the existing textarea, unsaved, for the user to edit | llm-proxy (soft: sub-nodes, if it suggests a parent) | M | **Shipped 2026-10-21, ahead of Slice 3 — parent suggestion was cut, which removed the `sub-nodes` dependency entirely** |
 | 7 | `ai-structure-suggestions` | "This looks like it belongs under X" / "link X and Y," always dismissible, never auto-applied | llm-proxy, sub-nodes | M | Slice 4 |
 | 8 | `billing` | Stripe, entitlements, gates the gpt-5.4 flagship tier | auth, llm-proxy | M–L | Deferred |
 | 9 | `cloud-sync` | Persona graph moves server-side for multi-device access — **this is where the real privacy/deletion/encryption design SPEC.md has always deferred actually has to get built** | auth, platform-backend | L | Deferred |
@@ -319,16 +319,273 @@ prevent one visitor from eating the whole cap.
 
 ### `sub-nodes`: data model is easy, canvas UX is the risk (same lesson as v0's GraphView task)
 
-Pure functions (`setParent` + cycle check, `getDescendants`, delete =
-re-parent not cascade) are small and testable. react-flow's native
-`parentId` nesting constrains child dragging to the parent's bounds — most
-likely place to overrun scope, same as v0's original graph-view task.
-Recommendation: separate cards with a distinct containment connector first,
-not nested container rendering (less react-flow work). Tree, not DAG
-(`parentId` is a field, not a new edge type — "contains" and "relates to"
-mean different things). Domain tag inherits from parent by default,
-editable. Export: selecting a parent needs one written rule for whether
-descendants count as "neighbors" for the one-hop expansion.
+**Decided 2026-10-21.** Everything below is a decision, not a sketch; tasks
+are in todo.md Phase 8. The two framing decisions came from the founder and
+are not reopened here: **tree, not DAG**, with `parentId` as a field on the
+node rather than a typed edge ("contains" and "relates to" mean different
+things, and merging them into the edge list destroys the distinction the
+feature exists to create); and **AI proposes, never applies** — in fact
+nothing in this module calls OpenAI at all, which is a large part of why
+it's cheap.
+
+#### Data model
+
+```ts
+parentId?: string;   // absent = top level. Never written as null.
+```
+
+Optional-and-absent, not `string | null`. Two practical reasons: the whole
+graph is stored as **one JSON blob** under a single Dexie key
+(`lib/storage/db.ts`), so an added optional field needs **no Dexie version
+bump and no migration at all** — existing records simply lack the key and
+read as top-level, which is the correct default. And `| null` would create
+two spellings of "top level" that every call site then has to handle; one
+spelling is one fewer bug.
+
+Three pure functions, all in **one new file** `lib/graph/parent.ts`. They're
+mutually dependent (`setParent` is implemented in terms of the ancestor
+walk), so splitting them one-per-file the way `linkNodes`/`unlinkNodes` are
+split would buy nothing:
+
+- `setParent(graph, nodeId, parentId | undefined)` — throws on self-parent
+  and on a cycle (when `parentId` is a descendant of `nodeId`), following
+  `linkNodes`' precedent that a logically incoherent operation throws. An
+  unknown `nodeId`/`parentId` is a **no-op** returning the graph unchanged,
+  following `deleteNode`'s precedent that a missing target isn't an error —
+  the editor's picker is built from the live graph, so a stale id there is a
+  race, not a user mistake worth an exception.
+- `getAncestorIds(graph, nodeId)` — nearest-first. This one function does
+  three jobs: the cycle check inside `setParent`, the export rule below, and
+  the path labels in the editor's picker and on the canvas card. **It must
+  stop at a missing parent id rather than throw, and carry a `visited` set.**
+- `getDescendants(graph, nodeId)` — transitive children, excluding the node
+  itself; BFS over a `parentId → children` map built once. **Same `visited`
+  guard.**
+
+Those `visited` guards are not defensive padding and not optional. A cycle in
+the stored blob would make both walks loop forever, on the main thread, every
+render — and the blob survives in IndexedDB, so the user's graph would be
+permanently unopenable with no UI left to repair it. That's total data loss
+for that user from one bad write, which is the "never simplify away error
+handling that prevents data loss" case.
+
+**The cycle guard must not be routable around.** `useGraph`'s `updateNode`
+currently takes `Partial<Omit<PersonaNode, "id">>`, which already permits
+`parentId` — so the editor could set a parent today, bypassing `setParent`
+entirely and writing the exact cycle the guard exists to prevent. Fix it at
+the type level, not by convention: narrow the patch type to
+`Partial<Omit<PersonaNode, "id" | "parentId">>` and add a dedicated
+`setParent(nodeId, parentId)` method to the context. TypeScript then makes
+the bypass a compile error. `addNode` keeps accepting `parentId` in its
+payload and needs no guard — a node that doesn't exist yet can't be an
+ancestor of anything.
+
+#### Delete: re-parent confirmed, and specifically *one level up*
+
+plan.md's original recommendation stands, and the reason is the asymmetry of
+the mistake. Weave has no undo, no history and no trash — a cascade would
+destroy an entire subtree behind a single `window.confirm`, and DESIGN.md §7
+prohibits silent data loss outright. Re-parenting loses one level of
+*grouping*, which is visible on the canvas the instant it happens and costs
+two clicks to restore.
+
+The precise rule: the deleted node's **direct children inherit the deleted
+node's own `parentId`** — the subtree rises exactly one level rather than all
+of its members becoming top-level. Grandchildren are untouched. If the
+deleted node was top-level, its children become top-level. That's the
+smallest change that preserves every relationship still having both ends.
+
+**The deleted node's own edges are still all removed, unchanged from today.**
+SPEC.md's "Deleting a node removes its edges too — no dangling edges" is a
+ticked Success Criterion and this module doesn't touch it. The tempting
+symmetry — re-point the deleted node's edges onto its parent, the way its
+children are re-pointed — is explicitly rejected: it would invent
+relationships the user never drew. "Work contains Project X, Project X
+relates to Gym" does not mean "Work relates to Gym", and silently asserting
+it would feed that invention into every future export.
+
+The confirm copy must name the consequence with a real count, because the
+count is the whole difference between a safe click and a regretted one:
+*"Delete 'Work'? Its 3 sub-nodes move up to top level. This can't be
+undone."* Copy, not a feature — the cheapest possible mitigation for having
+no undo.
+
+#### Export: the one written rule plan.md asked for
+
+The flagged decision, and the one most likely to produce a surprising
+export. Reason from what the one-hop rule is *for*: it exists to stop
+dangling references — exported text saying "see Work Projects" with that node
+absent. Hierarchy produces a *stronger* dangling reference than a link does.
+A child's body is frequently only legible under its parent ("Sprint rituals"
+means nothing without "Acme"), whereas a parent's body is self-contained
+without its children. So the rule is asymmetric, and the asymmetry *is* the
+decision:
+
+> **Ancestors in, descendants out. Neither counts toward the one-hop
+> expansion, which stays link-only.**
+
+As the exact set:
+
+```
+included = selected ∪ ancestors(selected) ∪ neighbours(selected)
+```
+
+and nothing else. Three consequences worth stating separately, because each
+is a thing someone will otherwise re-litigate:
+
+1. **A selected child pulls in its whole ancestor chain to the root**, not
+   just its immediate parent. Bounded by tree depth (realistically 2-3), and
+   a half-chain ("Sprint rituals" under a parent whose own parent is missing)
+   is exactly the dangling reference the rule exists to prevent.
+2. **A selected parent does not pull in its descendants.** Selecting "Work"
+   with twelve children would silently export thirteen nodes; the token
+   counter would stay truthful (it's the same function) but the *selection*
+   would stop meaning what the checkbox list shows, which is worse than a
+   missing node. A parent's own body is a legitimate thing to export alone.
+   The mitigation is to make selecting the subtree **easy and visible**
+   rather than automatic — children indented in the export list, with a
+   per-parent subtree-select affordance (todo.md Phase 8).
+3. **No neighbours of ancestors, and no ancestors of neighbours.** This is
+   the rule that keeps the export from quietly becoming the whole graph.
+   Hierarchy makes the graph dramatically more connected — a root node is an
+   ancestor of its entire subtree — so any transitive rule explodes. Every
+   included node stays **exactly one derivation step** from the selection,
+   which is what today's rule already does.
+
+Rendering stays flat: `##` for every node, plus one added meta line
+`*Under: Work / Acme*` when the node has an ancestor chain. Deliberately not
+a nested-heading rewrite — that would mean ordering output as a tree
+traversal, would change the shape of existing exports, and gains nothing a
+model can't read from the words. **Ordering does change**: ancestors are
+emitted immediately before the selected node that pulled them in (root
+first), so the block reads top-down; dedup by id is unchanged.
+
+One rule covers both export paths. "Draft with AI" POSTs the markdown
+`exportContext` produces, so it inherits this for free — no second decision
+for the AI path, and no second place for the two to drift.
+
+#### Canvas: nesting rejected, and more firmly than before
+
+plan.md's recommendation — separate cards plus a distinct containment
+connector, not react-flow's native `parentId` container nesting — is
+confirmed, and two of its three reasons are stronger now than when it was
+written.
+
+- **Native nesting makes child positions relative to the parent.** Every
+  `position` already persisted in IndexedDB is absolute, and the drag-persist
+  path (`onNodesChange` → `updateNode(id, {position})`) writes back whatever
+  react-flow reports. Under nesting the *meaning* of the one field this app
+  already stores would change the moment a node gained a parent, and nodes
+  saved before and after would be silently incomparable. That's a data change
+  disguised as a rendering choice, and it's decisive on its own.
+- **It puts the just-shipped link-remove control at risk.**
+  `PersonaEdgeComponent` places its remove button at the bezier midpoint in
+  absolute flow coordinates via `EdgeLabelRenderer` and relies on a 20px
+  transparent hit path. Children inside a container live in a different
+  coordinate space, and edge stacking across a container boundary is a rough
+  edge in react-flow — so the hit path for an intra-parent link can end up
+  under the container's own surface. The founder asked for that affordance a
+  day ago because they'd concluded links were permanent; regressing it to
+  gain nested rendering is a bad trade.
+- **A container is a card-on-card.** DESIGN.md §3 bans elevation theater and
+  specifies exactly one card treatment. A parent would need a second
+  rendering mode, and §3 starts getting argued with rather than followed.
+
+What to build instead:
+
+- **Containment is a second react-flow edge type, derived at render time from
+  `node.parentId`** — never stored in `graph.edges`. Built in the same
+  `useEffect` that maps `graph.edges`, with id `contains:<parent>-><child>`.
+  It must be `selectable: false` and `deletable: false`, **and**
+  `onEdgesChange`'s remove branch must early-return on that id prefix. Two
+  belts for one bug, because the current handler calls
+  `unlinkNodes(edge.source, edge.target)` on any removal — reaching it with a
+  containment edge would fire an unlink for a link that doesn't exist and
+  blank the connector until the next resync.
+- **Distinguish by geometry, not colour.** DESIGN.md allows one accent and
+  one line colour; a second hue is out. So: 1.5px `--line` **dashed**, with a
+  `--line` arrowhead at the child end. Dashed reads as structural, solid as a
+  link the user drew. Critically, **the containment connector never turns
+  `--accent`**, even when an endpoint is selected — if structure highlighted
+  the same way links do, the two would become indistinguishable at precisely
+  the moment the user is inspecting one, and "accent means something I drew
+  or selected" would stop being true.
+- **The child card also says what it's under**, as one 12px Plex Mono
+  `--ink-muted` line in the existing meta slot. Redundant with the connector
+  on purpose: layout is manual, so a child can sit 2000px from its parent
+  with the connector running off-screen entirely. Cuttable if the card gets
+  crowded, but it's one line and it's what makes hierarchy readable at a
+  glance.
+- **No drag-to-nest.** Dropping a node onto another to re-parent it conflicts
+  with free positioning (every incidental overlap becomes a claim of intent),
+  needs a hover-target affordance DESIGN.md doesn't have, and leans on
+  react-flow's node-intersection API — the exact scope overrun this section
+  exists to avoid. The canvas is read-only for hierarchy in this phase. If
+  testers try it and nothing happens, that's the signal to spec it properly.
+
+#### Editor: one row, zero new states
+
+A parent is set by **one compact row directly under Domain: label "Part of",
+a native `<select>`**. Nothing more.
+
+This panel's complexity budget is spent on *states*, not rows — it already
+carries interview mode, a proposed-draft block, sign-in prompts, two AI error
+paths and an in-flight guard. A native select adds **no state at all**: no
+async, no loading, no error, no AI, nothing that interacts with interview
+mode. That's the entire reason it fits, and the reason a searchable combobox
+or a drag-and-drop tree picker doesn't. Rung 4 of the ladder: the platform
+already ships this control.
+
+- Placement under Domain, not near Notes: "Part of" is metadata of the same
+  kind as the domain tag, and the compact metadata cluster at the top of the
+  panel is where metadata already lives. It doesn't touch the Notes
+  textarea's `flex-1`, which DESIGN.md §4 says must breathe.
+- Options are `None (top level)` plus every node **except self and its
+  descendants** — so a cycle is simply unreachable from the UI. Option labels
+  show the ancestor path (`Work / Acme`) so two children both named
+  "Logistics" are distinguishable. No `<optgroup>`; tens of nodes don't need
+  it.
+- `setParent` still throws on a cycle even though the UI can't produce one.
+  Same reasoning already written into this codebase for auth: the UI is UX,
+  not the gate.
+- **`parentId` joins the `isDirty` comparison.** Easy to forget, and the
+  consequence is that switching nodes mid-change discards the choice with no
+  warning — the exact failure the dirty check exists to prevent.
+- Save calls `setParent` alongside `updateNode` (two context calls, one
+  handler, no new plumbing). For a new node, `parentId` rides along in
+  `addNode`'s payload.
+- **A new child is placed near its parent**, by offsetting from the parent's
+  position instead of `Math.random() * 200`. One line, and it prevents the
+  worst first impression of the feature: a child appearing in a random corner
+  with a dashed line stretched across the whole canvas. Not auto-layout —
+  SPEC.md's manual-layout rule stands.
+- Domain inheritance: **prefill only, never derived.** When a parent is
+  chosen and the domain field is empty, fill it with the parent's domain. A
+  live derived value would mean re-parenting silently rewrites a child's
+  domain — an invisible content change — and would give the field two
+  meanings. Prefill is ~2 lines and cuttable; derivation is a model concept
+  and is rejected.
+
+#### Doc changes this module needs (founder's call, not written by the planner)
+
+- **SPEC.md** — a `sub-nodes` section recording the go-ahead (Boundaries puts
+  this module under "Ask first", so building it without one violates the
+  founder's own rule); the export rule above added to Graph & Export
+  Semantics; one Success Criterion for re-parent-on-delete and one for the
+  export rule.
+- **DESIGN.md §4** — the containment connector (dashed `--line`, arrowhead,
+  never accent), the card's parent line, the editor's "Part of" row.
+  **§7** — the delete confirm copy naming the sub-node consequence.
+
+#### Risks and mitigations (additive)
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| A cycle reaches the stored blob (bypassed guard, hand-edited record, a future import) | **Highest — both tree walks loop forever on the main thread, and the bad state persists in IndexedDB, leaving the user's graph permanently unopenable** | `visited` set in both walks (non-negotiable); `parentId` removed from `updateNode`'s patch type so the guard can't be bypassed in TypeScript; one unit test per walk feeding a hand-built cyclic graph |
+| The export rule surprises the user — more or fewer nodes than the selection implies | High — export is the entire product | The two explosion guards get their own named unit tests (an ancestor's neighbour is NOT included; a neighbour's ancestor is NOT included); children indented in the export list so the hierarchy the rule acts on is visible where the selection happens |
+| Deleting a parent is still destructive with no undo, re-parenting or not | Medium — one confirm click, no recovery | Confirm copy names the real child count and the exact consequence; re-parenting bounds the loss to one level of grouping |
+| A containment edge reaches `onEdgesChange`'s remove branch and fires `unlinkNodes` | Medium — connector blanks until resync, and it reads as a link having been deleted | `selectable: false` + `deletable: false` + id-prefix early-return |
+| Scope overrun into nested container rendering or drag-to-nest mid-task | Medium — the v0 GraphView lesson, repeating | Both are rejected above by name, with reasons, so "just try nesting" is a decision to reverse rather than a gap to fill |
 
 ### `graph-indexing` ("graphify"): premature now, two cheap pieces worth having early
 

@@ -604,3 +604,272 @@ for the answers' distinctive words returns nothing.
       price constants, AND the OpenAI project's allowed-models list, or
       every call 403s.
 
+## Phase 8: sub-nodes (Slice 2) — PLANNED 2026-10-21, NOT BUILT
+
+Decisions live in plan.md's `sub-nodes` subsection and are not re-litigated
+here. The short version, because it determines what every task below is
+allowed to do: a tree via `parentId?` on the node (not a typed edge); delete
+re-parents children one level up rather than cascading; export pulls in
+**ancestors but not descendants**, and neither counts toward the link-only
+one-hop expansion; the canvas gets a derived dashed containment connector,
+**not** react-flow's native container nesting; a parent is set by one native
+`<select>` in the editor. **No AI anywhere in this phase** — not one OpenAI
+call, which is most of why it's cheap. Parent *suggestion* is
+`ai-structure-suggestions` (Slice 4), deliberately not here.
+
+Nothing in `graph.edges` changes shape, nothing in Dexie needs a version
+bump (the graph is one JSON blob and `parentId` is additive), and no route
+handler is touched.
+
+- [ ] Task: Record the `sub-nodes` go-ahead and the two doc amendments
+  - Why: SPEC.md Boundaries lists `sub-nodes` under "Ask first" — "each
+    needs its own spec and explicit go-ahead, not silent scope creep once
+    the backend exists". Planning it doesn't satisfy that; building it
+    without a recorded decision breaks the founder's own rule, and it's the
+    cheapest item in this phase to get right.
+  - Acceptance: the founder adds a `sub-nodes` section to SPEC.md carrying
+    (a) the go-ahead, (b) the export rule from plan.md added to Graph &
+    Export Semantics, (c) two new Success Criteria — one for
+    re-parent-on-delete, one for the export rule. DESIGN.md gains the
+    containment connector (dashed `--line`, `--line` arrowhead at the child
+    end, never `--accent`), the card's parent line, and the editor's "Part
+    of" row in §4, plus the delete-confirm copy in §7.
+  - Verify: SPEC.md and DESIGN.md each describe the feature the tasks below
+    build, with no rule left contradicting another. Blocks Checkpoint F's
+    sign-off, not the start of Task 2 — the pure-logic tasks are
+    unambiguous either way.
+  - Files: `SPEC.md`, `DESIGN.md` — **founder-owned; developer does not
+    edit these**
+  - Dependencies: none
+
+- [ ] Task: `parentId` on PersonaNode + the three pure functions
+  - Acceptance: `parentId?: string` added to `PersonaNode`, absent meaning
+    top level — **never written as `null`**, so there's exactly one spelling
+    of "top level". New file `lib/graph/parent.ts` exports:
+    `setParent(graph, nodeId, parentId | undefined)` (throws on self-parent
+    and on a cycle, following `linkNodes`' self-link precedent; no-ops on an
+    unknown node or parent id, following `deleteNode`'s missing-target
+    precedent; returns the graph unchanged when nothing moves),
+    `getAncestorIds(graph, nodeId)` (nearest-first, stops at a missing
+    parent id rather than throwing), `getDescendants(graph, nodeId)`
+    (transitive, excludes the node itself). **Both walks carry a `visited`
+    set** — a cycle in the stored blob would otherwise spin the main thread
+    forever on every render, and the blob persists in IndexedDB, so the
+    user's graph becomes permanently unopenable. No Dexie version bump: the
+    graph is one JSON blob and the field is additive, so existing records
+    read as top-level with zero migration.
+  - Verify: `npm test` — cases: sets a parent; clears a parent with
+    `undefined`; self-parent throws; direct cycle (A→B, then B→A) throws;
+    indirect cycle (A→B→C, then A under C) throws; unknown ids no-op;
+    `getDescendants` returns grandchildren; `getAncestorIds` returns
+    root-last order; **a hand-built already-cyclic graph terminates in both
+    walks instead of hanging** (that test is the point of the `visited`
+    sets). Plus `npm run build`.
+  - Files: `lib/graph/types.ts`, `lib/graph/parent.ts`, `tests/parent.test.ts`
+  - Dependencies: none
+
+- [ ] Task: Delete re-parents children instead of cascading
+  - Why: Weave has no undo, no history and no trash. A cascade destroys a
+    whole subtree behind one `window.confirm`, which DESIGN.md §7 prohibits
+    outright. Re-parenting loses one level of grouping — visible immediately,
+    two clicks to restore.
+  - Acceptance: `deleteNode(graph, nodeId)` additionally re-points the
+    deleted node's **direct children to the deleted node's own `parentId`**
+    (so the subtree rises exactly one level; a deleted top-level node's
+    children become top-level). Grandchildren untouched. The deleted node's
+    own edges are still all removed — unchanged, and SPEC.md's "no dangling
+    edges" criterion still holds. **Its edges are NOT re-pointed to its
+    parent**: that would invent relationships the user never drew, and every
+    later export would carry the invention.
+  - Verify: `npm test` — every existing `tests/deleteNode.test.ts` case
+    passes unchanged, plus: deleting a top-level parent leaves its children
+    top-level; deleting a mid-level node moves its children to the
+    grandparent and leaves grandchildren alone; deleting a node that has
+    both children and edges does both jobs in one call.
+  - Files: `lib/graph/deleteNode.ts`, `tests/deleteNode.test.ts`
+  - Dependencies: the `parentId` task
+  - **Parallel-safe** with the export and context-plumbing tasks — disjoint
+    files, all three only read the new type.
+
+- [ ] Task: Export rule — ancestors in, descendants out
+  - Why: plan.md flagged this as the one semantic that needed a written
+    rule, and export is the whole product. A child's body is often illegible
+    without its parent ("Sprint rituals" without "Acme"); a parent's body is
+    self-contained without its children. The rule is asymmetric because the
+    dangling-reference risk is asymmetric.
+  - Acceptance: `exportContext` includes exactly
+    `selected ∪ ancestors(selected) ∪ neighbours(selected)` — the **full**
+    ancestor chain to the root for each selected node, **no descendants of a
+    selected parent**, and **no neighbours-of-ancestors or
+    ancestors-of-neighbours** (every included node stays exactly one
+    derivation step from the selection; hierarchy makes the graph far more
+    connected, so any transitive rule swallows the whole graph). Ancestors
+    are emitted immediately before the selected node that pulled them in,
+    root first, so the block reads top-down; dedup by id unchanged; empty
+    selection still returns `null`. `renderNode` gains one meta line
+    `*Under: Work / Acme*` when the node has ancestors — flat `##` headings
+    stay, no nested-heading rewrite. "Draft with AI" inherits all of this
+    free, since it POSTs this function's markdown.
+  - Verify: `npm test` — every existing `tests/export.test.ts` case passes
+    unchanged, plus: a selected child includes its parent; includes its
+    grandparent too; a selected parent does NOT include its child; **an
+    ancestor's link-neighbour is NOT included**; **a link-neighbour's
+    ancestor is NOT included** (those two are the explosion guards and are
+    the reason this task has tests at all); a node whose `parentId` points
+    at a deleted id still exports rather than throwing; ancestors appear
+    before the child in the output string.
+  - Files: `lib/graph/export.ts`, `tests/export.test.ts`
+  - Dependencies: the `parentId` task
+  - **Parallel-safe** with the delete and context-plumbing tasks.
+
+- [ ] Task: Context plumbing — `setParent` on `useGraph`, `parentId` off `updateNode`
+  - Why: `updateNode` currently takes `Partial<Omit<PersonaNode, "id">>`,
+    which already accepts `parentId` — so the editor could write a parent
+    directly and bypass the cycle check entirely, producing exactly the
+    unrecoverable state the guard exists to prevent. A convention won't hold
+    this; the type has to.
+  - Acceptance: `GraphContextValue` gains
+    `setParent(nodeId: string, parentId?: string)` wired through `persist`
+    to the pure `setParent`; `updateNode`'s patch type narrows to
+    `Partial<Omit<PersonaNode, "id" | "parentId">>`. `addNode` keeps
+    accepting `parentId` in its payload and needs no guard — a node that
+    doesn't exist yet can't be an ancestor of anything. One comment notes
+    that asymmetry so it doesn't read as an oversight.
+  - Verify: `npm run build` type-checks, and a deliberate local
+    `updateNode(id, { parentId: x })` is a compile error (try it, then
+    delete it — that failure IS the fix); `npm test` still green.
+  - Files: `lib/storage/useGraph.tsx`
+  - Dependencies: the `parentId` task
+  - **Parallel-safe** with the delete and export tasks.
+
+- [ ] Task: Editor — the "Part of" row
+  - Acceptance: one compact row directly under Domain: label "Part of"
+    (label above control, per DESIGN.md §4's form rhythm), a native
+    `<select>` whose options are `None (top level)` plus every node **except
+    self and its descendants**, so a cycle is unreachable from the UI.
+    Option labels carry the ancestor path (`Work / Acme`) so two children
+    with the same title are distinguishable. No `<optgroup>`, no combobox,
+    no tree widget — the control adds **zero new states** to a panel that
+    already juggles interview mode, a proposed-draft block, sign-in prompts
+    and two AI error paths, and that is the whole reason it fits.
+    `parentId` joins the `isDirty` comparison (otherwise switching nodes
+    mid-change discards the choice silently). Save calls `setParent`
+    alongside `updateNode`; a new node carries `parentId` in `addNode`'s
+    payload. **A new child spawns offset from its parent's position**
+    instead of `Math.random() * 200` — one line, and it avoids a child
+    appearing in a random corner with a dashed connector stretched across
+    the canvas. Delete's confirm copy names the real count: "Delete 'Work'?
+    Its 3 sub-nodes move up to top level. This can't be undone." Optional
+    and cuttable: when a parent is chosen and Domain is empty, prefill
+    Domain from the parent — **prefill only, never derived**, because a
+    derived value would silently rewrite children's domains on re-parenting.
+  - Verify: manual — create a child under an existing node, confirm it saves
+    and survives a reload; open the child and confirm neither it nor its own
+    descendants appear in its own picker; change the parent, cancel, confirm
+    the discard warning fires; delete a parent with children and confirm the
+    confirm text names the count and the children survive one level up.
+  - Files: `components/NodeEditor.tsx`
+  - Dependencies: the context-plumbing task
+  - **Parallel-safe** with the canvas task — different files, both only read
+    the shared context.
+
+- [ ] Task: Canvas — derived containment connector
+  - Why: plan.md's warning, now stronger. react-flow's native `parentId`
+    nesting makes child positions *relative to the parent*, which would
+    silently change the meaning of every absolute `position` already in
+    IndexedDB the moment a node gained a parent — the drag-persist path
+    writes back whatever react-flow reports. It also risks the
+    just-shipped link-remove control, which places its button at the bezier
+    midpoint in absolute flow coordinates and relies on a 20px transparent
+    hit path that a container surface can sit on top of.
+  - Acceptance: containment edges are **derived at render time from
+    `node.parentId`**, never stored in `graph.edges` — built in the same
+    `useEffect` that maps `graph.edges`, id `contains:<parent>-><child>`,
+    `selectable: false`, `deletable: false`, **and** `onEdgesChange`'s remove
+    branch early-returns on that id prefix (two belts, because that handler
+    calls `unlinkNodes(source, target)` on any removal and would otherwise
+    fire an unlink for a link that doesn't exist). Visual: 1.5px `--line`
+    **dashed** with a `--line` arrowhead at the child end — geometry, not a
+    second hue, since DESIGN.md allows one accent and one line colour. **It
+    never turns `--accent`**, even when an endpoint is selected, so "accent
+    means something I drew or selected" keeps its meaning and structure stays
+    distinguishable from links at exactly the moment the user is inspecting
+    one. The child card gains one 12px Plex Mono `--ink-muted` parent line in
+    the existing meta slot (cuttable if the card crowds, but manual layout
+    means a connector can run entirely off-screen). **No drag-to-nest** —
+    the canvas is read-only for hierarchy this phase.
+  - Verify: manual — build a three-level tree, confirm dashed connectors
+    render and survive a reload; confirm hovering a containment connector
+    offers no remove control; **regression check, named because it's the real
+    risk: hover an ordinary link in the same graph and confirm the x still
+    appears and still removes it**; select a child and confirm its links go
+    accent while its containment connector doesn't.
+  - Files: `components/GraphView.tsx`
+  - Dependencies: the `parentId` task
+  - **Parallel-safe** with the editor task.
+
+- [ ] Task: Export list shows the hierarchy it exports from
+  - Why: this is what keeps "a selected parent doesn't pull in descendants"
+    from reading as a missing feature. If the sidebar is a flat list, the
+    rule is invisible at the exact moment the user is choosing.
+  - Acceptance: the checkbox list orders nodes by tree (each parent followed
+    by its subtree) and indents children by depth. Cuttable half: a
+    per-parent affordance that selects that node plus its whole subtree in
+    one click — explicit and visible, which is the point, as opposed to the
+    export function doing it silently.
+  - Verify: manual — a three-level tree reads as a tree in the sidebar;
+    selecting only a child shows a counter that accounts for the ancestors
+    the export will add; selecting only a parent does not pull its children
+    in.
+  - Files: `components/ExportPanel.tsx`
+  - Dependencies: the export-rule and `parentId` tasks
+  - **Parallel-safe** with the editor and canvas tasks.
+
+### Checkpoint F — sub-nodes
+- [ ] `npm test`, `npm run lint`, `npm run build` all pass; the 90 existing
+      tests still pass **unchanged** (if an existing export or delete test
+      needed editing, the semantics moved further than this phase intended —
+      stop and say so rather than editing the test)
+- [ ] Manual walkthrough on a three-level tree: create, re-parent, delete a
+      mid-level parent and confirm children rose exactly one level, reload
+      and confirm everything persisted
+- [ ] Export rule verified by hand against the counter: select a child and
+      confirm ancestors arrived; select a parent and confirm its children did
+      not; confirm no second-degree node snuck in
+- [ ] product-manager design review of the canvas connector and the editor
+      row against DESIGN.md — specifically whether a dashed connector plus a
+      card line reads as deliberate structure or as two half-measures
+- [ ] Founder has ratified the SPEC.md / DESIGN.md amendments (first task in
+      this phase)
+
+### Deliberately skipped, ranked by what it would cost to be wrong
+1. **Nothing guards a cycle reaching the stored blob except the `visited`
+   sets and the narrowed `updateNode` type.** Both are in the tasks above
+   precisely because the failure mode is unrecoverable: an infinite walk on
+   every render, persisted in IndexedDB, with no UI left to repair it. If one
+   thing in this phase gets built sloppily, make sure it isn't these two.
+2. **No undo on delete, still.** Re-parenting bounds the damage to one level
+   of grouping, and the confirm copy names the count, but deleting a parent
+   still destroys its body and its edges irreversibly. Add real undo when a
+   tester loses something they cared about — not before; a trash/history
+   model is a much larger change than it looks.
+3. **No AI parent suggestion.** Belongs to `ai-structure-suggestions`
+   (Slice 4) and is explicitly out of scope here. Keeping it out is what let
+   node drafting ship early; pulling it in now would re-create the
+   dependency that was just removed.
+4. **No drag-to-nest on the canvas.** The signal to build it: a tester drags
+   a node onto another and expects something to happen. Needs its own design
+   (hover target, drop affordance) and react-flow's intersection API, which
+   is the scope overrun plan.md has now warned about twice.
+5. **No max depth.** A six-deep chain produces an ugly `Under: a / b / c / d`
+   line and a long option label; nothing breaks. If it ever bites, truncate
+   the displayed path to the last two ancestors — a display fix, not a model
+   constraint.
+6. **No sibling ordering.** Children render in node-array order. Nobody has
+   asked for manual ordering, and adding an `order` field would be a real
+   schema concept for a cosmetic gain.
+7. **No `getChildren`/`isAncestor` helpers, no tree view-model, no
+   auto-layout of children under parents.** One-liners at call sites, and
+   auto-layout contradicts SPEC.md's manual-layout rule. The one piece worth
+   taking is the near-free part already folded into the editor task: spawn a
+   new child offset from its parent rather than at random.

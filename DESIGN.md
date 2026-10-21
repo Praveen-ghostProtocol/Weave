@@ -154,6 +154,30 @@ product.
   Dismissing clears the result without clearing the selection, so the user
   can immediately try raw export or redraft.
 
+**Containment (added 2026-10-21 with sub-nodes).** A node may sit under
+another. Three places show it, and one place deliberately doesn't.
+
+- **On the canvas**, a dashed 1.5px `--line` connector with a `--line`
+  arrowhead at the child end. Distinguished from a link by *geometry, not
+  colour*, and it **never turns `--accent`** — structure must not look like
+  a relationship at the exact moment someone is inspecting one. It carries
+  no hover remove control, because containment is changed in the editor,
+  not on the canvas. Not react-flow's native container nesting: that makes
+  child positions relative to the parent, silently changing the meaning of
+  a value already persisted, and a container surface would sit over the
+  link remove control's hit area. No drag-to-nest.
+- **In the editor**, one row labelled "Part of" directly under Domain: a
+  native `<select>` listing every node except this one and its own
+  descendants, defaulting to "Nothing — top level". A native select on
+  purpose — this panel's budget is spent on *states*, not rows, and it
+  already carries interview mode, a proposed-draft block, a sign-in prompt
+  and two AI error paths. A combobox or tree picker adds loading and error
+  states; a select adds none.
+- **In the export list**, children are indented 14px per level. Without
+  that, a parent tick appearing to check other rows reads as a bug.
+- **Not on the node card.** No parent line, no breadcrumb. The connector
+  already says it, and §3's flat card has no room to spare.
+
 Shared layout rule: canvas is the base layer; editor and export sidebar are
 panels that sit on top of it from opposite edges, never a third column that
 permanently shrinks the canvas. Only one panel open at a time on narrow
@@ -195,6 +219,16 @@ transform transition. Animate `transform`/`opacity` only.
 - Label above every form input, errors inline below the field, not a toast.
 - Node delete (cascades edges, per spec) requires a confirm step — it's
   destructive and silent data loss is explicitly prohibited.
+  - **The confirm must name the consequence, with a real count**, not just
+    ask "are you sure". A top-level node with sub-nodes reads: *"Delete
+    'Work'? Its 3 sub-nodes move up to top level. This can't be undone."*
+    A nested one names where they actually land: *"Delete 'Sprint'? Its 2
+    sub-nodes move up under 'Acme'. This can't be undone."* A node with no
+    sub-nodes keeps the shorter wording, and the count is never shown as
+    zero. Children are re-parented rather than deleted (SPEC.md), but a
+    user cannot be expected to know that from a generic prompt — and with
+    no undo anywhere in the product, the prompt is the only place that
+    information can appear.
 - Warn before navigating away with an unsaved node edit open.
 - Contrast: body text and `--ink-muted` both meet WCAG AA against
   `--surface` and `--surface-raised` in both modes — verify this once real

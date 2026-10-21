@@ -202,6 +202,24 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
 - No fixed coverage percentage for v0. Every new data/graph function ships
   with at least one test (trivial getters/setters excluded).
 
+**`sub-nodes` — go-ahead given 2026-10-21, built the same day.** Boundaries
+below lists this module under "Ask first". The founder gave the go-ahead
+directly ("let's do sub-nodes next"), and it shipped ahead of
+`ai-export-selection`, which is deferred to a usage trigger rather than a
+slice number — picking from a checkbox list of six nodes is not a problem
+anyone has yet.
+
+A node may name one parent (`parentId`, absent meaning top level). It is a
+tree, not a graph, and a field rather than a typed edge: "Acme contains
+Sprint rituals" and "Sprint rituals relates to Gym" are different claims,
+and folding both into the edge list loses that in every consumer. Single
+parent and no cycles then come from the shape itself rather than being
+invariants something has to police.
+
+Deliberately NOT included: AI suggesting a parent. That is
+`ai-structure-suggestions` (Slice 4), and pulling it in here would
+re-create the dependency that letting node drafting ship early removed.
+
 ## Graph & Export Semantics
 - **Edges** are undirected and deduped (linking A→B when B→A exists is a
   no-op). Deleting a node removes its edges too — no dangling edges.
@@ -210,6 +228,41 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
   dangling references like "see Work Projects" with that node missing. No
   hard truncation in v0 — show a running character/token-estimate count so
   the user can judge if it's too big for their target chat.
+- **Containment and export (added 2026-10-21 with `sub-nodes`).** The rule,
+  because hierarchy makes dangling references worse than links do:
+
+  > A selection also pulls in its **ancestors**, all the way to the root.
+  > It does **not** pull in descendants. Neither counts toward the one-hop
+  > expansion, which stays link-only.
+
+  The asymmetry is the decision, not an oversight. A child's body is often
+  illegible without its parent ("Sprint rituals" means nothing without
+  "Acme"), while a parent's body is self-contained without its children. A
+  selected child therefore pulls its whole chain, since a half-chain is
+  exactly the dangling reference this rule exists to prevent, and ancestors
+  are emitted before the node that pulled them in. Each nested node renders
+  with a flat `##` heading plus one `*Under: Acme / Sprint*` path line — the
+  export is pasted into a chat box, where a deep heading tree reads worse
+  than a path.
+
+  **Selecting a parent still gets its sub-nodes, via the checkbox.** Ticking
+  a parent in the export list ticks every descendant, visibly, so the list
+  keeps showing exactly what will be exported and the counter keeps matching
+  it. A child stays independently untickable afterwards. This deliberately
+  lives in the panel and not in `exportContext`: a function that re-added
+  descendants would make unticking one child silently do nothing.
+
+  No neighbours-of-ancestors and no ancestors-of-neighbours. A root is an
+  ancestor of its whole subtree, so hierarchy makes the graph dense enough
+  that any transitive rule here swallows all of it.
+- **Deleting a parent re-parents its children**, it does not cascade. They
+  inherit the deleted node's own parent, so a subtree rises exactly one level
+  and grandchildren are untouched. Weave has no undo, no history and no
+  trash, so a cascade would destroy a subtree behind one confirm. The deleted
+  node's own edges are still all removed, and are NOT re-pointed to its
+  parent: "Work contains Project X" plus "Project X relates to Gym" does not
+  make "Work relates to Gym", and inventing that once would carry it into
+  every later export.
 - **Export with zero nodes selected**: export action is disabled, not an
   error state.
 - **AI draft assist**: a separate, clearly-labeled action from the raw
@@ -268,6 +321,16 @@ export function linkNodes(graph: PersonaGraph, fromId: string, toId: string): Pe
 - [x] UI reviewed by product-manager against `DESIGN.md` and doesn't read as
       generic/templated AI output (default bento grids, stock gradients,
       centered-hero-two-buttons, etc.).
+
+### Sub-nodes (added 2026-10-21)
+- [x] A node can be placed under another from the editor; the relationship
+      persists across reload and is visible on the canvas as containment
+      rather than as an ordinary link.
+- [x] Deleting a parent moves its children up one level instead of deleting
+      them, and removes only its own links.
+- [x] Exporting a selection includes that selection's ancestors and not its
+      descendants; ticking a parent in the export list ticks its descendants
+      so the list always shows what will be exported.
 
 ### AI draft assist (addendum) — superseded 2026-10-20
 These were met by the v0 BYOK build and are kept for the record. The key

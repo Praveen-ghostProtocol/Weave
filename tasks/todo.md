@@ -621,7 +621,7 @@ Nothing in `graph.edges` changes shape, nothing in Dexie needs a version
 bump (the graph is one JSON blob and `parentId` is additive), and no route
 handler is touched.
 
-- [ ] Task: Record the `sub-nodes` go-ahead and the two doc amendments
+- [x] Task: Record the `sub-nodes` go-ahead and the two doc amendments
   - Why: SPEC.md Boundaries lists `sub-nodes` under "Ask first" — "each
     needs its own spec and explicit go-ahead, not silent scope creep once
     the backend exists". Planning it doesn't satisfy that; building it

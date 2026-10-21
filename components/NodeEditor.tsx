@@ -398,11 +398,27 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
 
   function handleDelete() {
     if (!nodeId) return;
-    // DESIGN.md §7: delete cascades edges, destructive, requires a confirm
-    // step. window.confirm is the native, lazy way to get that for v0.
-    if (!window.confirm("Delete this node and its links? This can't be undone.")) {
-      return;
+    // DESIGN.md §7: destructive, so it confirms — and the confirm NAMES
+    // the consequence with a real count rather than asking "are you
+    // sure". Children are re-parented rather than deleted, but nobody can
+    // be expected to know that from a generic prompt, and with no undo
+    // anywhere in the product this prompt is the only place it can say so.
+    const childCount = graph.nodes.filter((n) => n.parentId === nodeId).length;
+    const grandparent = existing?.parentId
+      ? graph.nodes.find((n) => n.id === existing.parentId)
+      : undefined;
+    const name = title.trim() || "this node";
+
+    let message = `Delete "${name}"? This can't be undone.`;
+    if (childCount > 0) {
+      const plural = childCount === 1 ? "sub-node moves" : "sub-nodes move";
+      const destination = grandparent
+        ? `up under "${grandparent.title || "its parent"}"`
+        : "up to top level";
+      message = `Delete "${name}"? Its ${childCount} ${plural} ${destination}. This can't be undone.`;
     }
+
+    if (!window.confirm(message)) return;
     deleteNode(nodeId);
     onClose();
   }

@@ -691,12 +691,18 @@ handler is touched.
   - **Parallel-safe** with the export and context-plumbing tasks — disjoint
     files, all three only read the new type.
 
-- [ ] Task: Export rule — ancestors in, descendants out
+- [ ] Task: Export rule — ancestors in; descendants via the checkbox
   - Why: plan.md flagged this as the one semantic that needed a written
     rule, and export is the whole product. A child's body is often illegible
     without its parent ("Sprint rituals" without "Acme"); a parent's body is
     self-contained without its children. The rule is asymmetric because the
     dangling-reference risk is asymmetric.
+  - **AMENDED 2026-10-21 by the founder:** selecting a parent must also
+    get its sub-nodes. Implemented as a *selection* cascade in
+    `ExportPanel` (ticking a parent ticks its descendants, visibly), NOT
+    inside `exportContext`, which stays as specified below. Doing it in
+    the function would make unticking one child silently ineffective. See
+    plan.md's amended block. The export-list task below owns the cascade.
   - Acceptance: `exportContext` includes exactly
     `selected ∪ ancestors(selected) ∪ neighbours(selected)` — the **full**
     ancestor chain to the root for each selected node, **no descendants of a

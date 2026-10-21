@@ -424,6 +424,25 @@ decision:
 > **Ancestors in, descendants out. Neither counts toward the one-hop
 > expansion, which stays link-only.**
 
+> **AMENDED BY THE FOUNDER, 2026-10-21.** Selecting a parent must also get
+> its sub-nodes. Their wording resolves the objection below rather than
+> overriding it: the sub-nodes *get selected*, visibly, rather than being
+> silently appended at export time. So the checkbox list still shows
+> exactly what will be exported and the counter still matches it.
+>
+> The split that implements it:
+> - `exportContext` is **unchanged** — selection, plus ancestors, plus
+>   one-hop neighbours. It never adds descendants of its own accord.
+> - `ExportPanel` cascades the *checkbox*: ticking a parent ticks every
+>   descendant, unticking it unticks them. A child stays independently
+>   toggleable afterwards, so "everything under Academics except the one
+>   embarrassing module" is still expressible.
+>
+> Deliberately not done inside `exportContext`: if the function re-added
+> descendants, unticking a single child would silently do nothing, and the
+> list would again stop meaning what it shows. One mechanism, in the place
+> the user can see.
+
 As the exact set:
 
 ```

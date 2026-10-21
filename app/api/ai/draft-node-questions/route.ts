@@ -33,6 +33,14 @@ const QUESTIONS_PROMPT =
   '"what are your responsibilities" or "what are your goals". ' +
   "Ask about concrete particulars only the user would know: names, routines, " +
   "specific decisions, what is actually hard about it. " +
+  // A name is not a gender. Live testing with the heading "My manager
+  // Dana" had the model write "her" and "she" throughout, inventing a
+  // fact about a real person the user never supplied — the same class of
+  // error as making up a job title, and more likely to be noticed and
+  // resented. These notes get pasted into other AI tools as fact.
+  "Never assume or infer anyone's gender or pronouns from their name. Unless " +
+  "the user has stated them, write about people using they/them, or rephrase " +
+  "to avoid pronouns entirely. " +
   "You may append a short example answer in parentheses to show the kind of " +
   "detail wanted. " +
   "Output one question per line, with no numbering, no bullets, no preamble " +

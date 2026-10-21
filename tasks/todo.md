@@ -499,12 +499,18 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
       rather than by a staged live race. Decide: stage the race, or
       reword the criterion to what is actually proven. Leaving it
       ambiguous is the one unacceptable option.
-- [ ] `npm test`, `npm run lint` and `npm run build` pass
+- [x] `npm test`, `npm run lint` and `npm run build` pass (90 tests, 2026-10-21)
 - [x] Quota race closed and covered by a test
 - [x] Per-user cap numbers ratified in SPEC.md and matching the code
 - [x] No doc describes the retired BYOK UI as live
-- [ ] code-reviewer pass over the whole Slice 1 diff, with the money path
-      (reserve, settle, refund, and the three cap checks) read line by line
+- [x] code-reviewer pass over the whole Slice 1 diff, with the money path
+      read line by line (2026-10-20). Found three launch blockers, all
+      fixed and committed: the global cap silently failing past ~1000
+      ledger rows, magic-link sign-in as an unbounded account-minting
+      path, and reservations that could be stranded with no recovery.
+      Plus the reservation being an estimate rather than a bound, usage
+      failing open at $0.00, and an open redirect on both auth failure
+      branches.
 
 ## Phase 7: AI node drafting — BUILT 2026-10-21
 

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // route's own decision-making for real. The point of this file is the
 // money path — specifically that a reservation lands BEFORE any cap is
 // read, which is what stops concurrent requests overspending a quota.
-const { getUserMock, budgetMocks, draftBriefMock, MockDraftBriefError } = vi.hoisted(() => ({
+const { getUserMock, budgetMocks, draftBriefMock, MockLlmError } = vi.hoisted(() => ({
   getUserMock: vi.fn(),
   budgetMocks: {
     isKillSwitchActive: vi.fn(),
@@ -16,16 +16,16 @@ const { getUserMock, budgetMocks, draftBriefMock, MockDraftBriefError } = vi.hoi
     refund: vi.fn(),
   },
   draftBriefMock: vi.fn(),
-  // The route does `err instanceof DraftBriefError` against the module it
+  // The route does `err instanceof LlmError` against the module it
   // imports — which is this mock. Declaring the class here (rather than
   // inline in the factory) lets the tests construct the *same* class the
   // route will compare against, so the error-mapping branches are actually
   // entered. A separately-declared lookalike silently skips all of them.
-  MockDraftBriefError: class DraftBriefError extends Error {
+  MockLlmError: class LlmError extends Error {
     kind: string;
     constructor(kind: string) {
       super(kind);
-      this.name = "DraftBriefError";
+      this.name = "LlmError";
       this.kind = kind;
     }
   },
@@ -39,7 +39,7 @@ vi.mock("@/lib/llm/budget", () => budgetMocks);
 
 vi.mock("@/lib/llm/openai", () => ({
   draftBrief: draftBriefMock,
-  DraftBriefError: MockDraftBriefError,
+  LlmError: MockLlmError,
   // The real bound, not a stub: the route reserves with it, so a test that
   // stubbed it couldn't catch the reservation being under-priced.
   inputTokenBound: (markdown: string) => markdown.length,
@@ -177,7 +177,7 @@ describe("POST /api/ai/draft-brief — guards before any spend", () => {
     expect(budgetMocks.reserve).not.toHaveBeenCalled();
   });
 
-  it("rethrows a non-DraftBriefError from the call, refunding first", async () => {
+  it("rethrows a non-LlmError from the call, refunding first", async () => {
     draftBriefMock.mockRejectedValue(new Error("something unexpected"));
 
     await expect(post()).rejects.toThrow();
@@ -190,7 +190,7 @@ describe("POST /api/ai/draft-brief — guards before any spend", () => {
 // and ExportPanel delegates all wording to the route — so this mapping IS
 // the implementation of that criterion. It previously had no coverage at
 // all: the suite's only failure test threw an object that wasn't a
-// DraftBriefError, so the whole branch was skipped and all three arms could
+// LlmError, so the whole branch was skipped and all three arms could
 // have been deleted with the suite still green.
 // The only control bounding *who* can draw on the founder's budget.
 // OpenAI offers this project no enforceable spend cap, so an unbounded
@@ -250,7 +250,7 @@ describe("POST /api/ai/draft-brief — upstream error mapping", () => {
     ["network", 502, /could not reach/i],
     ["invalid_key", 500, /unavailable/i],
   ])("maps %s to %i with its own message", async (kind, status, messageRe) => {
-    draftBriefMock.mockRejectedValue(new MockDraftBriefError(kind as string));
+    draftBriefMock.mockRejectedValue(new MockLlmError(kind as string));
 
     const res = await post();
 

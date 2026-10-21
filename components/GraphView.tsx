@@ -6,8 +6,11 @@
 // node id before it reaches IndexedDB — see onNodesChange below), and wires
 // native drag-from-handle connect/disconnect to linkNodes/unlinkNodes
 // (tasks/plan.md Open Question 3's resolution — no separate "Link" button).
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath,
   Handle,
   Position,
   ReactFlow,
@@ -15,6 +18,7 @@ import {
   useNodesState,
   type Edge,
   type EdgeChange,
+  type EdgeProps,
   type Node,
   type NodeChange,
   type NodeProps,
@@ -62,6 +66,94 @@ function PersonaNodeComponent({ data, selected }: NodeProps<FlowNode>) {
 
 const nodeTypes = { persona: PersonaNodeComponent };
 
+type PersonaEdgeData = { highlighted: boolean };
+type PersonaFlowEdge = Edge<PersonaEdgeData, "persona">;
+
+// Links carry real meaning here — export pulls in every node one hop from
+// the selection — so removing one has to be as discoverable as making one.
+//
+// Before this, deletion worked only by clicking the 1.5px line and pressing
+// Delete, with nothing on screen saying so, and a selected edge looked
+// identical to an edge merely touching a selected node (DESIGN.md colours
+// both `--accent`). Users linked things by accident and concluded it was
+// permanent. The fix is an explicit control, not a documented keystroke:
+// hovering or selecting a link reveals a small x at its midpoint.
+function PersonaEdgeComponent({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  selected,
+  data,
+  source,
+  target,
+}: EdgeProps<PersonaFlowEdge>) {
+  const { unlinkNodes } = useGraph();
+  const [hovered, setHovered] = useState(false);
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  const active = Boolean(hovered || selected);
+  // DESIGN.md's rule stands: an edge touching a selected node goes accent.
+  // What is new is that the edge's OWN state is now legible too — width,
+  // not just colour, so "I have hold of this link" is distinguishable from
+  // "this link happens to touch what I picked".
+  const stroke = active || data?.highlighted ? "var(--accent)" : "var(--line)";
+
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} style={{ stroke, strokeWidth: active ? 2.5 : 1.5 }} />
+      {/* Invisible, generously wide hit area: a 1.5px line is near
+          impossible to hover deliberately. */}
+      <path
+        d={edgePath}
+        fill="none"
+        strokeWidth={20}
+        stroke="transparent"
+        style={{ cursor: "pointer" }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      />
+      <EdgeLabelRenderer>
+        <button
+          type="button"
+          aria-label="Remove this link"
+          title="Remove this link"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onClick={(e) => {
+            e.stopPropagation();
+            unlinkNodes(source, target);
+          }}
+          className="nodrag nopan flex h-5 w-5 items-center justify-center rounded-full border text-[12px] leading-none transition-opacity"
+          style={{
+            position: "absolute",
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            pointerEvents: "all",
+            opacity: active ? 1 : 0,
+            borderColor: "var(--line)",
+            backgroundColor: "var(--surface-raised, var(--surface))",
+            color: "var(--ink-muted)",
+          }}
+        >
+          ×
+        </button>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
+const edgeTypes = { persona: PersonaEdgeComponent };
+
 interface GraphViewProps {
   onNodeClick: (nodeId: string) => void;
 }
@@ -96,9 +188,11 @@ export default function GraphView({ onNodeClick }: GraphViewProps) {
         const id = `${e.fromId}->${e.toId}`;
         return {
           id,
+          type: "persona",
           source: e.fromId,
           target: e.toId,
           selected: prevById.get(id)?.selected ?? false,
+          data: { highlighted: false },
         };
       });
     });
@@ -180,12 +274,8 @@ export default function GraphView({ onNodeClick }: GraphViewProps) {
     () =>
       edges.map((e) => ({
         ...e,
-        style: {
-          stroke:
-            e.selected || selectedNodeIds.has(e.source) || selectedNodeIds.has(e.target)
-              ? "var(--accent)"
-              : "var(--line)",
-          strokeWidth: 1.5,
+        data: {
+          highlighted: selectedNodeIds.has(e.source) || selectedNodeIds.has(e.target),
         },
       })),
     [edges, selectedNodeIds]
@@ -197,6 +287,7 @@ export default function GraphView({ onNodeClick }: GraphViewProps) {
         nodes={nodes}
         edges={displayEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

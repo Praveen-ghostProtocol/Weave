@@ -6,15 +6,25 @@
 // container themselves. Positioning this panel inside the app layout is the
 // integration task's job, not this component's (it just assumes it gets
 // slotted into a flex/grid parent at full height).
+//
+// AI drafting assist (`ai-node-drafting`) lives here too: one quiet
+// secondary button under the title, which swaps the Notes region for a few
+// AI-written questions and turns the answers into a draft. Deliberately NOT
+// two equal buttons offering "write it yourself" or "use AI" — the editor
+// already IS the write-it-yourself path, and presenting it as a mode to
+// choose makes the default feel like a decision. Same grammar as the export
+// sidebar: the primary action is untouched, AI is additive and secondary.
 import {
   forwardRef,
   useId,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
 import { useGraph } from "@/lib/storage/useGraph";
+import { useSession } from "@/lib/supabase/useSession";
 
 interface NodeEditorProps {
   nodeId: string | null;
@@ -30,11 +40,14 @@ export interface NodeEditorHandle {
   isDirty: () => boolean;
 }
 
+type AiStatus = "idle" | "asking" | "drafting" | "error";
+
 const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEditor(
   { nodeId, onClose },
   ref,
 ) {
   const { graph, addNode, updateNode, deleteNode } = useGraph();
+  const { user, loading: sessionLoading } = useSession();
   const existing = nodeId ? graph.nodes.find((n) => n.id === nodeId) ?? null : null;
 
   // IMPORTANT: this panel stays mounted (it's not a modal — DESIGN.md), so
@@ -52,6 +65,26 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   const [title, setTitle] = useState(existing?.title ?? "");
   const [domain, setDomain] = useState(existing?.domain ?? "");
   const [body, setBody] = useState(existing?.body ?? "");
+
+  // --- AI drafting assist state ---
+  // Interview mode replaces the Notes region in place (same panel, same
+  // width) rather than opening a modal or a second panel — identical
+  // reasoning to the export sidebar's result block.
+  const [questions, setQuestions] = useState<string[] | null>(null);
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [aiStatus, setAiStatus] = useState<AiStatus>("idle");
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [signInPrompt, setSignInPrompt] = useState(false);
+  // When the Notes field already has content, a draft lands here for the
+  // user to place rather than silently overwriting their writing.
+  const [proposed, setProposed] = useState<string | null>(null);
+  // Synchronous double-submit guard, same reasoning as ExportPanel's: the
+  // button's `disabled` relies on React committing state before a second
+  // click lands, which is timing, not a lock. Each of these calls reserves
+  // budget against the user's quota.
+  const aiInFlightRef = useRef(false);
+
+  const inInterview = questions !== null;
 
   const uid = useId();
   const titleId = `${uid}-title`;
@@ -75,12 +108,125 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   const [titleTouched, setTitleTouched] = useState(false);
 
   const canSave = title.trim().length > 0;
+  const hasTitle = title.trim().length > 0;
   const isDirty =
     title !== (existing?.title ?? "") ||
     domain !== (existing?.domain ?? "") ||
-    body !== (existing?.body ?? "");
+    body !== (existing?.body ?? "") ||
+    // Typed answers and an unplaced draft are unsaved work too — without
+    // these, switching nodes mid-interview discards them with no warning.
+    answers.some((a) => a.trim().length > 0) ||
+    proposed !== null;
 
   useImperativeHandle(ref, () => ({ isDirty: () => isDirty }), [isDirty]);
+
+  /** Shared plumbing for both AI calls: guards, status, error mapping. */
+  async function callAi<T>(
+    url: string,
+    payload: unknown,
+    status: AiStatus,
+  ): Promise<T | null> {
+    // Signed out: prompt instead of firing a request the server would
+    // reject anyway. While the session is still loading we let it go and
+    // handle a 401 below rather than guessing from an unsettled `user`.
+    // The server checks auth itself — this is UX, not the gate.
+    if (!sessionLoading && !user) {
+      setSignInPrompt(true);
+      setAiStatus("idle");
+      setAiError(null);
+      return null;
+    }
+    if (aiInFlightRef.current) return null;
+    aiInFlightRef.current = true;
+    setSignInPrompt(false);
+    setAiStatus(status);
+    setAiError(null);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // 401 means the session lapsed mid-visit — the same discoverable
+        // prompt as never having signed in, not a red failure.
+        if (res.status === 401) {
+          setSignInPrompt(true);
+          setAiStatus("idle");
+          return null;
+        }
+        // The route words every failure for a human (quota, cap, kill
+        // switch, upstream). Show its message rather than re-deriving one
+        // from the status code in a second place.
+        setAiError(
+          typeof data?.error === "string" ? data.error : "Something went wrong. Try again.",
+        );
+        setAiStatus("error");
+        return null;
+      }
+      setAiStatus("idle");
+      return data as T;
+    } catch {
+      setAiError("Could not reach Weave. Check your connection and try again.");
+      setAiStatus("error");
+      return null;
+    } finally {
+      aiInFlightRef.current = false;
+    }
+  }
+
+  async function startInterview() {
+    const data = await callAi<{ questions: string[] }>(
+      "/api/ai/draft-node-questions",
+      { title: title.trim(), domain: domain.trim() || undefined },
+      "asking",
+    );
+    if (!data || !Array.isArray(data.questions)) return;
+    setQuestions(data.questions);
+    setAnswers(data.questions.map(() => ""));
+  }
+
+  async function draftFromAnswers() {
+    if (!questions) return;
+    const payload = {
+      title: title.trim(),
+      domain: domain.trim() || undefined,
+      answers: questions.map((q, i) => ({ question: q, answer: answers[i] ?? "" })),
+    };
+    const data = await callAi<{ text: string }>("/api/ai/draft-node-body", payload, "drafting");
+    if (!data || typeof data.text !== "string") return;
+    placeDraft(data.text);
+  }
+
+  /** Empty Notes takes the draft directly; existing writing is never overwritten. */
+  function placeDraft(text: string) {
+    if (body.trim().length === 0) {
+      setBody(text);
+      exitInterview();
+    } else {
+      setProposed(text);
+    }
+  }
+
+  /** Zero-AI fallback: keeps the user's typing even when a draft fails. */
+  function useAnswersAsNotes() {
+    if (!questions) return;
+    const written = questions
+      .map((q, i) => ({ q, a: (answers[i] ?? "").trim() }))
+      .filter((pair) => pair.a.length > 0)
+      .map((pair) => `**${pair.q}**\n\n${pair.a}`)
+      .join("\n\n");
+    if (!written) return;
+    placeDraft(written);
+  }
+
+  function exitInterview() {
+    setQuestions(null);
+    setAnswers([]);
+    setAiStatus("idle");
+    setAiError(null);
+  }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -122,10 +268,15 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
     onClose();
   }
 
+  const busy = aiStatus === "asking" || aiStatus === "drafting";
+
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex h-full w-[420px] flex-col gap-5 overflow-hidden rounded-[8px] p-6"
+      // max-w rather than a hard width: 420px overflows a ~375px phone, and
+      // this panel is the densest surface in the app now that the interview
+      // lives in it (tasks/plan.md Open Question 5).
+      className="flex h-full w-full max-w-[420px] flex-col gap-5 overflow-hidden rounded-[8px] p-6"
       style={{
         backgroundColor: "var(--surface-raised, #FFFFFF)",
         boxShadow: "0 1px 3px color-mix(in srgb, var(--ink) 15%, transparent)",
@@ -150,6 +301,36 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
         {titleTouched && !canSave && (
           <p className="text-sm text-[var(--danger,#A23B2E)]">Title is required.</p>
         )}
+
+        {/* The assist offer. Inert without a title — there is genuinely
+            nothing to ask about yet. Never styled as an error. */}
+        {!inInterview && !proposed && (
+          <>
+            <button
+              type="button"
+              onClick={startInterview}
+              disabled={!hasTitle || busy}
+              className="self-start text-left text-[13px] text-[var(--accent)] underline-offset-2 hover:underline disabled:text-[var(--ink-muted)] disabled:no-underline"
+            >
+              {aiStatus === "asking"
+                ? "Thinking of questions…"
+                : "Not sure what to write? Answer a few questions"}
+            </button>
+            {signInPrompt && (
+              <p role="status" aria-live="polite" className="text-[12px] text-[var(--ink-muted)]">
+                <a href="/login" className="text-[var(--accent)] underline underline-offset-2">
+                  Sign in
+                </a>{" "}
+                to use AI here. You can always write notes yourself.
+              </p>
+            )}
+            {aiStatus === "error" && aiError && (
+              <p role="alert" aria-live="polite" className="text-[12px] text-[var(--danger,#A23B2E)]">
+                {aiError}
+              </p>
+            )}
+          </>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -171,17 +352,132 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
         </datalist>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
-        <label htmlFor={bodyId} className="text-sm font-medium text-[var(--ink)]">
-          Notes
-        </label>
-        <textarea
-          id={bodyId}
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          className="flex-1 resize-none rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2 text-[14px] leading-normal text-[var(--ink)]"
-        />
-      </div>
+      {inInterview ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-sm font-medium text-[var(--ink)]">
+              A few questions
+            </span>
+            <button
+              type="button"
+              onClick={exitInterview}
+              className="text-[13px] text-[var(--accent)] underline-offset-2 hover:underline"
+            >
+              Back to writing
+            </button>
+          </div>
+          <p className="text-[12px] text-[var(--ink-muted)]">
+            Answer what you like and skip the rest. Short answers are fine.
+          </p>
+
+          <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
+            {questions.map((q, i) => (
+              <div key={i} className="flex flex-col gap-2">
+                <label
+                  htmlFor={`${uid}-q${i}`}
+                  className="text-sm font-medium leading-snug text-[var(--ink)]"
+                >
+                  {q}
+                </label>
+                <textarea
+                  id={`${uid}-q${i}`}
+                  rows={2}
+                  value={answers[i] ?? ""}
+                  onChange={(e) =>
+                    setAnswers((prev) => {
+                      const next = [...prev];
+                      next[i] = e.target.value;
+                      return next;
+                    })
+                  }
+                  className="resize-none rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2 text-[14px] leading-normal text-[var(--ink)]"
+                />
+              </div>
+            ))}
+          </div>
+
+          {aiStatus === "error" && aiError && (
+            <p role="alert" aria-live="polite" className="text-[12px] text-[var(--danger,#A23B2E)]">
+              {aiError}
+            </p>
+          )}
+
+          <div className="flex flex-col gap-2 border-t border-[var(--line)] pt-4">
+            <button
+              type="button"
+              onClick={draftFromAnswers}
+              disabled={busy || !answers.some((a) => a.trim().length > 0)}
+              className="w-full rounded-[6px] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--surface)] transition-transform active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {aiStatus === "drafting" ? "Drafting…" : "Draft from my answers"}
+            </button>
+            {/* Costs nothing and needs no network: whatever the user typed
+                is never wasted, even when a draft fails. */}
+            <button
+              type="button"
+              onClick={useAnswersAsNotes}
+              disabled={!answers.some((a) => a.trim().length > 0)}
+              className="w-full rounded-[6px] border border-[var(--line)] px-4 py-2 text-sm font-medium text-[var(--ink)] transition-transform active:scale-[0.98] disabled:text-[var(--ink-muted)]"
+            >
+              Use my answers as notes
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <label htmlFor={bodyId} className="text-sm font-medium text-[var(--ink)]">
+            Notes
+          </label>
+          <textarea
+            id={bodyId}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            className="flex-1 resize-none rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2 text-[14px] leading-normal text-[var(--ink)]"
+          />
+
+          {/* A draft arriving over existing writing is proposed, never
+              applied — the user decides where it goes. */}
+          {proposed !== null && (
+            <div className="flex flex-col gap-2 rounded-[6px] border border-[var(--line)] p-3">
+              <span className="text-sm font-semibold text-[var(--ink)]">Suggested draft</span>
+              <div className="max-h-40 overflow-y-auto whitespace-pre-wrap text-[14px] leading-normal text-[var(--ink)]">
+                {proposed}
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBody(proposed);
+                    setProposed(null);
+                    exitInterview();
+                  }}
+                  className="rounded-[6px] bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-[var(--surface)]"
+                >
+                  Replace
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBody((b) => `${b.trimEnd()}\n\n${proposed}`);
+                    setProposed(null);
+                    exitInterview();
+                  }}
+                  className="rounded-[6px] border border-[var(--line)] px-3 py-1.5 text-sm font-medium text-[var(--ink)]"
+                >
+                  Append
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProposed(null)}
+                  className="text-sm text-[var(--accent)] underline-offset-2 hover:underline"
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-3 border-t border-[var(--line)] pt-5">
         {nodeId ? (
@@ -205,7 +501,10 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
           </button>
           <button
             type="submit"
-            disabled={!canSave}
+            // Disabled mid-interview: "what does Save mean right now?" has
+            // no good answer while the Notes field isn't on screen.
+            disabled={!canSave || inInterview}
+            title={inInterview ? "Finish or leave the questions first" : undefined}
             className="rounded-[6px] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--surface)] transition-transform disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
           >
             Save

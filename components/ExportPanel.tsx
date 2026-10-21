@@ -176,7 +176,7 @@ export default function ExportPanel() {
 
   return (
     <aside
-      className="flex w-80 flex-col rounded-[8px] border border-[var(--line)] bg-[var(--surface-raised)]"
+      className="flex w-full max-w-80 flex-col rounded-[8px] border border-[var(--line)] bg-[var(--surface-raised)]"
       style={{ boxShadow: "0 1px 3px color-mix(in srgb, var(--ink) 15%, transparent)" }}
     >
       <div className="sticky top-0 border-b border-[var(--line)] bg-[var(--surface-raised)] p-4">

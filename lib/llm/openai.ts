@@ -36,14 +36,14 @@
 
 import { serverEnv } from "../env.server";
 
-export type DraftBriefErrorKind = "invalid_key" | "rate_limited" | "network";
+export type LlmErrorKind = "invalid_key" | "rate_limited" | "network";
 
-export class DraftBriefError extends Error {
-  readonly kind: DraftBriefErrorKind;
+export class LlmError extends Error {
+  readonly kind: LlmErrorKind;
 
-  constructor(kind: DraftBriefErrorKind, message: string) {
+  constructor(kind: LlmErrorKind, message: string) {
     super(message);
-    this.name = "DraftBriefError";
+    this.name = "LlmError";
     this.kind = kind;
   }
 }
@@ -94,7 +94,7 @@ export function inputTokenBound(markdown: string): number {
   return markdown.length;
 }
 
-const SYSTEM_PROMPT =
+const BRIEF_PROMPT =
   "You turn a user's persona notes into context for pasting into another AI " +
   "chat. Given the notes below, write a concise, first-person context brief " +
   "(a few short paragraphs, written as the user introducing themselves) that " +
@@ -141,10 +141,36 @@ async function hashUserId(userId: string): Promise<string> {
   return hex.slice(0, 32);
 }
 
-export async function draftBrief(
-  markdown: string,
-  userId: string
-): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+export interface LlmCall {
+  /** Static, server-built system prompt. Never client-supplied. */
+  instructions: string;
+  /** The variable part, last, for OpenAI's automatic prompt-prefix caching. */
+  input: string;
+  userId: string;
+  maxOutputTokens: number;
+}
+
+export interface LlmResult {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * One call to the Responses API. Every fixed task endpoint goes through
+ * here, so the timeout, the error mapping, the usage fail-closed and the
+ * safety identifier are written once rather than copied per endpoint.
+ *
+ * `instructions` is always built server-side by the caller. This function
+ * never sees a client-supplied prompt, which is what keeps SPEC.md's
+ * "fixed task endpoints only" boundary true as endpoints are added.
+ */
+export async function callOpenAI({
+  instructions,
+  input,
+  userId,
+  maxOutputTokens,
+}: LlmCall): Promise<LlmResult> {
   let response: Response;
   try {
     response = await fetch("https://api.openai.com/v1/responses", {
@@ -155,10 +181,10 @@ export async function draftBrief(
       },
       body: JSON.stringify({
         model: MODEL,
-        instructions: SYSTEM_PROMPT,
-        input: markdown,
+        instructions,
+        input,
         reasoning: { effort: "none" },
-        max_output_tokens: MAX_OUTPUT_TOKENS,
+        max_output_tokens: maxOutputTokens,
         safety_identifier: await hashUserId(userId),
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -169,16 +195,16 @@ export async function draftBrief(
     // Logged separately because a run of timeouts is an upstream-health
     // signal, and silently refunding them would hide it.
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
-      console.error(`openai.draftBrief: request aborted after ${REQUEST_TIMEOUT_MS}ms`);
+      console.error(`openai.callOpenAI: request aborted after ${REQUEST_TIMEOUT_MS}ms`);
     }
-    throw new DraftBriefError("network", "Could not reach OpenAI's API.");
+    throw new LlmError("network", "Could not reach OpenAI's API.");
   }
 
   if (response.status === 401) {
-    throw new DraftBriefError("invalid_key", "That API key was rejected by OpenAI.");
+    throw new LlmError("invalid_key", "That API key was rejected by OpenAI.");
   }
   if (response.status === 429) {
-    throw new DraftBriefError("rate_limited", "OpenAI's API is rate-limiting this key right now.");
+    throw new LlmError("rate_limited", "OpenAI's API is rate-limiting this key right now.");
   }
   if (!response.ok) {
     // Everything else is reported to the user as "network", which reads as
@@ -191,16 +217,16 @@ export async function draftBrief(
     // Deliberately logs the status only, never the response body — an
     // OpenAI 400 can echo the request input back, which is persona content.
     console.error(
-      `openai.draftBrief: unexpected status ${response.status} from the Responses API. ` +
+      `openai.callOpenAI: unexpected status ${response.status} from the Responses API. ` +
         "If this is persistent, the request shape or a parameter value is wrong, not the network."
     );
-    throw new DraftBriefError("network", `OpenAI's API returned an error (${response.status}).`);
+    throw new LlmError("network", `OpenAI's API returned an error (${response.status}).`);
   }
 
   const data = (await response.json()) as OpenAIResponsesPayload;
   const text = extractText(data);
   if (typeof text !== "string") {
-    throw new DraftBriefError("network", "OpenAI's API returned an unexpected response.");
+    throw new LlmError("network", "OpenAI's API returned an unexpected response.");
   }
 
   // Fail CLOSED on missing usage. Defaulting these to 0 bills a real,
@@ -213,11 +239,21 @@ export async function draftBrief(
   const outputTokens = data.usage?.output_tokens;
   if (typeof inputTokens !== "number" || typeof outputTokens !== "number") {
     console.error(
-      "openai.draftBrief: response had no usage figures — settling at worst case. " +
+      "openai.callOpenAI: response had no usage figures — settling at worst case. " +
         "The Responses API shape may have changed; check usage.input_tokens / usage.output_tokens."
     );
-    return { text, inputTokens: inputTokenBound(markdown), outputTokens: MAX_OUTPUT_TOKENS };
+    return { text, inputTokens: inputTokenBound(input), outputTokens: maxOutputTokens };
   }
 
   return { text, inputTokens, outputTokens };
+}
+
+/** `draft-brief`: turn selected node content into a pasteable context brief. */
+export function draftBrief(markdown: string, userId: string): Promise<LlmResult> {
+  return callOpenAI({
+    instructions: BRIEF_PROMPT,
+    input: markdown,
+    userId,
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
+  });
 }

@@ -506,27 +506,95 @@ Slice 1 Success Criteria in SPEC.md are all still unchecked.
 - [ ] code-reviewer pass over the whole Slice 1 diff, with the money path
       (reserve, settle, refund, and the three cap checks) read line by line
 
-## Phase 7: AI node drafting — NOT STARTED, needs its own spec
+## Phase 7: AI node drafting — BUILT 2026-10-21
 
-`ai-node-drafting` is capability-map module 6, listed in SPEC.md's
-Boundaries under "Ask first." The founder has given the go-ahead and
-resolved SPEC.md Open Question 3 in favour of the interview form over a
-chat thread, which is what plan.md recommended and which avoids amending
-DESIGN.md's no-chat-bubbles rule.
+Resolved before building, and recorded here so they are not re-litigated:
+free-text questions only (multiple choice returns the bucket you are in,
+not what is true about you, which is exactly the templated output DESIGN.md
+§8 exists to prevent); no voice in v1 (Chrome's speech API uploads audio to
+Google, which would add a processor to a privacy policy whose whole claim
+is that content stays local — and OS dictation already types into these
+textareas for free); no parent suggestion, which is what removed the
+dependency on `sub-nodes` and let this ship ahead of Slice 2.
 
-Settled so far:
-- Entry point: after the title field in `NodeEditor`, two options — write
-  it yourself, or let AI ask questions.
-- Shape: an interview form, not a chat thread. Three to five open questions
-  as labelled fields, then a second call drafts the body as editable text.
+- [x] Task: Extract the shared budget gate and generalise the OpenAI caller
+  - Why: two new endpoints would have been a second and third copy of the
+    kill-switch/auth/allowlist/reserve/cap/settle sequence, and SPEC.md
+    requires the quota numbers to move in lockstep.
+  - Acceptance: `lib/llm/guard.ts` owns everything that can lose money;
+    `callOpenAI({instructions, input, userId, maxOutputTokens})` replaces a
+    caller hardcoded to one prompt. Behaviour-neutral.
+  - Verify: the existing `tests/draftBrief.route.test.ts` passes UNCHANGED,
+    including its assertion that reserve precedes every cap read. DONE.
+  - Files: `lib/llm/guard.ts`, `lib/llm/openai.ts`,
+    `app/api/ai/draft-brief/route.ts`
+  - Note: `DraftBriefError` renamed `LlmError`; three endpoints share it.
 
-Still open, and blocking the spec:
-- Whether the questions are free-text only (recommended) or include any
-  closed or multiple-choice fields.
-- Whether voice input is in the first version, and if so whether via the
-  browser's built-in speech recognition (free, no server, but unsupported
-  in Firefox) or a server-side transcription API (costs money, and needs
-  its own fixed task endpoint plus budget plumbing through
-  `lib/llm/budget.ts`).
+- [x] Task: `/api/ai/draft-node-questions`
+  - Acceptance: takes `{title, domain?}` and nothing else — no graph, no
+    body, no prompt. Returns 3-5 open questions parsed as plain lines
+    (numbering and bullets stripped), capped at 5. Fewer than 2 usable
+    settles honestly (the call was billed) and 502s. 300 output tokens.
+  - Verify: `npm test`. DONE — verified live 2026-10-21.
+  - Files: `app/api/ai/draft-node-questions/route.ts`
 
-No tasks are written until those are decided and a spec exists.
+- [x] Task: `/api/ai/draft-node-body`
+  - Acceptance: takes `{title, domain?, answers}`, caps every field, drops
+    unanswered questions rather than sending blanks. The question text is
+    round-tripped as DATA — answers alone read as nonsense ("Tuesdays,
+    mostly") — so the block is delimited and the fixed server-side prompt
+    says its contents are never instructions. 700 output tokens.
+  - Verify: `npm test`. DONE — verified live 2026-10-21.
+  - Files: `app/api/ai/draft-node-body/route.ts`
+
+- [x] Task: Interview mode in NodeEditor
+  - Acceptance: one quiet secondary button under the title, inert without
+    a title, never styled as an error. Signed out fires no request and
+    shows an inline `role="status"` sign-in line. Questions replace the
+    Notes region in place with a "Back to writing" escape; Save is
+    disabled while in interview mode. Empty Notes takes the draft
+    directly; existing writing gets Replace / Append / Discard instead of
+    being overwritten. Nothing auto-saves. "Use my answers as notes"
+    concatenates locally with zero AI calls so typing is never wasted.
+  - Verify: manual. DONE 2026-10-21.
+  - Files: `components/NodeEditor.tsx`
+
+- [x] Task: Connection delete affordance
+  - Why: links are load-bearing (export pulls in one-hop neighbours), but
+    removal was click-the-1.5px-line-then-press-Delete with nothing on
+    screen saying so, and a selected edge looked identical to one merely
+    touching a selected node. The founder hit this and concluded links
+    were permanent.
+  - Acceptance: hovering or selecting a link reveals a round x at its
+    midpoint that removes it; a 20px invisible hit area makes the line
+    reachable; the edge's own state reads as width, not only colour, so
+    DESIGN.md's "accent when an endpoint is selected" rule survives.
+  - Verify: manual — link two nodes, hover, click x, link gone. DONE.
+  - Files: `components/GraphView.tsx`
+
+- [x] Task: Stop both panels overflowing a phone
+  - Acceptance: `w-full max-w-[420px]` / `max-w-80` instead of fixed
+    widths. Closes plan.md Open Question 5's remaining half, folded in
+    because interview mode makes the editor the densest surface in the app.
+  - Files: `components/NodeEditor.tsx`, `components/ExportPanel.tsx`
+
+### Live verification 2026-10-21
+Title "Weekend climbing" produced five questions specific to climbing —
+crag and partners, a typical Saturday, memorable routes, what is hardest
+right now, pre-climb ritual — not the generic responsibilities/goals/
+challenges triple that would have failed the quality bar. Answering 2 of 5
+produced a draft containing only those two subjects, with nothing invented
+for the three skipped ones. Ledger: two settled rows, `draft-node-questions`
+$0.000251 and `draft-node-body` $0.000147, so a full assisted node costs
+about $0.0004. Logs carry only (user, task, model, tokens, cost) — grepping
+for the answers' distinctive words returns nothing.
+
+### Still open
+- [ ] Per-user request-rate limiting (plan.md control #5). Dollar caps bound
+      OpenAI spend; the gap is Supabase and Vercel invocation cost under a
+      flood. Needs shared state on serverless, so it is a decision.
+- [ ] If question quality ever disappoints, the escape hatch is moving ONLY
+      the questions call to `gpt-5.4-mini`. That means changing MODEL, both
+      price constants, AND the OpenAI project's allowed-models list, or
+      every call 403s.
+

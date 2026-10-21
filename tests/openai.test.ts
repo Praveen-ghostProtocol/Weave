@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   draftBrief,
-  DraftBriefError,
+  LlmError,
   inputTokenBound,
   MODEL,
   PRICE_PER_MILLION_INPUT,
@@ -87,7 +87,7 @@ describe("draftBrief", () => {
     mockFetch({ ok: false, status: 401 });
     await expect(draftBrief("md", "user-1")).rejects.toMatchObject({ kind: "invalid_key" });
     mockFetch({ ok: false, status: 401 });
-    await expect(draftBrief("md", "user-1")).rejects.toBeInstanceOf(DraftBriefError);
+    await expect(draftBrief("md", "user-1")).rejects.toBeInstanceOf(LlmError);
   });
 
   it("throws the rate_limited variant on 429", async () => {

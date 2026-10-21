@@ -642,7 +642,7 @@ handler is touched.
     edit these**
   - Dependencies: none
 
-- [ ] Task: `parentId` on PersonaNode + the three pure functions
+- [x] Task: `parentId` on PersonaNode + the three pure functions
   - Acceptance: `parentId?: string` added to `PersonaNode`, absent meaning
     top level — **never written as `null`**, so there's exactly one spelling
     of "top level". New file `lib/graph/parent.ts` exports:
@@ -668,7 +668,7 @@ handler is touched.
   - Files: `lib/graph/types.ts`, `lib/graph/parent.ts`, `tests/parent.test.ts`
   - Dependencies: none
 
-- [ ] Task: Delete re-parents children instead of cascading
+- [x] Task: Delete re-parents children instead of cascading
   - Why: Weave has no undo, no history and no trash. A cascade destroys a
     whole subtree behind one `window.confirm`, which DESIGN.md §7 prohibits
     outright. Re-parenting loses one level of grouping — visible immediately,
@@ -691,7 +691,7 @@ handler is touched.
   - **Parallel-safe** with the export and context-plumbing tasks — disjoint
     files, all three only read the new type.
 
-- [ ] Task: Export rule — ancestors in; descendants via the checkbox
+- [x] Task: Export rule — ancestors in; descendants via the checkbox
   - Why: plan.md flagged this as the one semantic that needed a written
     rule, and export is the whole product. A child's body is often illegible
     without its parent ("Sprint rituals" without "Acme"); a parent's body is
@@ -728,7 +728,7 @@ handler is touched.
   - Dependencies: the `parentId` task
   - **Parallel-safe** with the delete and context-plumbing tasks.
 
-- [ ] Task: Context plumbing — `setParent` on `useGraph`, `parentId` off `updateNode`
+- [x] Task: Context plumbing — `setParent` on `useGraph`, `parentId` off `updateNode`
   - Why: `updateNode` currently takes `Partial<Omit<PersonaNode, "id">>`,
     which already accepts `parentId` — so the editor could write a parent
     directly and bypass the cycle check entirely, producing exactly the
@@ -748,7 +748,7 @@ handler is touched.
   - Dependencies: the `parentId` task
   - **Parallel-safe** with the delete and export tasks.
 
-- [ ] Task: Editor — the "Part of" row
+- [x] Task: Editor — the "Part of" row
   - Acceptance: one compact row directly under Domain: label "Part of"
     (label above control, per DESIGN.md §4's form rhythm), a native
     `<select>` whose options are `None (top level)` plus every node **except
@@ -779,7 +779,7 @@ handler is touched.
   - **Parallel-safe** with the canvas task — different files, both only read
     the shared context.
 
-- [ ] Task: Canvas — derived containment connector
+- [x] Task: Canvas — derived containment connector
   - Why: plan.md's warning, now stronger. react-flow's native `parentId`
     nesting makes child positions *relative to the parent*, which would
     silently change the meaning of every absolute `position` already in
@@ -814,7 +814,7 @@ handler is touched.
   - Dependencies: the `parentId` task
   - **Parallel-safe** with the editor task.
 
-- [ ] Task: Export list shows the hierarchy it exports from
+- [x] Task: Export list shows the hierarchy it exports from
   - Why: this is what keeps "a selected parent doesn't pull in descendants"
     from reading as a missing feature. If the sidebar is a flat list, the
     rule is invisible at the exact moment the user is choosing.
@@ -847,6 +847,34 @@ handler is touched.
       card line reads as deliberate structure or as two half-measures
 - [ ] Founder has ratified the SPEC.md / DESIGN.md amendments (first task in
       this phase)
+
+### Built and verified 2026-10-21
+
+All seven build tasks are done. Only the founder-owned SPEC.md / DESIGN.md
+amendment above remains open in this phase.
+
+The signal Checkpoint F asked for held: **every one of the 110 tests that
+existed before this phase passes unchanged.** No export or delete test
+needed editing, so the semantics did not move further than intended. 121
+tests now.
+
+Verified in a browser against real IndexedDB, not just unit tests:
+- A child saved carrying only its own `parentId`; the other nodes carry no
+  such key at all, so "top level" keeps one spelling into storage.
+- Ticking a parent in the export list ticked its child and left an
+  unrelated node alone; unticking the child afterwards left the parent
+  ticked, so "everything under Academics except that one module" works.
+- Selecting only the child produced a 109-character export for a
+  31-character body, because the ancestor rule pulled the parent in.
+- One containment edge rendered: dashed, line-coloured, marked inactive,
+  with no remove control. A real link drawn alongside it stayed solid and
+  kept exactly one remove button, hidden until hover. The two kinds
+  coexist without interfering, which was this phase's flagged risk.
+
+Deferred, unchanged: no AI parent suggestion (that is Slice 4's
+`ai-structure-suggestions`, and pulling it in here would re-create the
+dependency that was deliberately removed), no drag-to-nest, no max depth,
+no sibling ordering, and still no undo.
 
 ### Deliberately skipped, ranked by what it would cost to be wrong
 1. **Nothing guards a cycle reaching the stored blob except the `visited`

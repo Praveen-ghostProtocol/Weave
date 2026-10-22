@@ -36,6 +36,19 @@ interface DraftQuestion {
 interface NodeEditorProps {
   nodeId: string | null;
   onClose: () => void;
+  /**
+   * Pre-selects "Part of" when opening a brand-new node. Set when the user
+   * came here via "Add a sub-node" from a node they were reading, so the
+   * relationship they just expressed is already filled in rather than
+   * something they have to re-state in the dropdown.
+   */
+  initialParentId?: string;
+  /**
+   * Asks the parent to swap this panel for a new node nested under `id`.
+   * Routed upward rather than handled here because the page owns the
+   * unsaved-changes check and the remount key.
+   */
+  onAddChild?: (id: string) => void;
 }
 
 // Exposed to the parent so it can check for unsaved changes before swapping
@@ -155,7 +168,7 @@ function QuestionField({
 }
 
 const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEditor(
-  { nodeId, onClose },
+  { nodeId, onClose, initialParentId, onAddChild },
   ref,
 ) {
   const { graph, addNode, updateNode, deleteNode, setParent } = useGraph();
@@ -177,7 +190,9 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
   const [title, setTitle] = useState(existing?.title ?? "");
   const [domain, setDomain] = useState(existing?.domain ?? "");
   const [body, setBody] = useState(existing?.body ?? "");
-  const [parentId, setParentId] = useState<string>(existing?.parentId ?? "");
+  const [parentId, setParentId] = useState<string>(
+    existing?.parentId ?? initialParentId ?? ""
+  );
 
   // --- AI drafting assist state ---
   // Interview mode replaces the Notes region in place (same panel, same
@@ -242,7 +257,7 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
     title !== (existing?.title ?? "") ||
     domain !== (existing?.domain ?? "") ||
     body !== (existing?.body ?? "") ||
-    parentId !== (existing?.parentId ?? "") ||
+    parentId !== (existing?.parentId ?? initialParentId ?? "") ||
     // Typed answers and an unplaced draft are unsaved work too — without
     // these, switching nodes mid-interview discards them with no warning.
     answers.some((a) => a.trim().length > 0) ||
@@ -532,6 +547,21 @@ const NodeEditor = forwardRef<NodeEditorHandle, NodeEditorProps>(function NodeEd
             ))}
           </select>
         </div>
+      )}
+
+      {/* Nesting downward, next to the control for nesting upward. The
+          dropdown answers "what is this under"; this answers "what goes
+          under this", which is how people actually reach for it after
+          reading a node. Only on a saved node: a child cannot point at a
+          parent that has no id yet. */}
+      {nodeId && onAddChild && (
+        <button
+          type="button"
+          onClick={() => onAddChild(nodeId)}
+          className="self-start text-left text-[13px] text-[var(--accent)] underline-offset-2 hover:underline"
+        >
+          + Add a sub-node under this
+        </button>
       )}
 
       {inInterview ? (

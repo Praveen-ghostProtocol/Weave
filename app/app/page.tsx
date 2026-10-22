@@ -89,6 +89,11 @@ export default function Home() {
   // "new" (both would otherwise be falsy) is why this isn't just
   // `string | null`.
   const [editorTarget, setEditorTarget] = useState<string | null | undefined>(undefined);
+  // Parent for a brand-new node opened via "Add a sub-node". Separate
+  // from editorTarget because that already encodes three states
+  // (closed / new / editing id) and a fourth would make every read of
+  // it a puzzle.
+  const [newParentId, setNewParentId] = useState<string | undefined>(undefined);
   const [exportOpen, setExportOpen] = useState(false);
   const editorRef = useRef<NodeEditorHandle>(null);
 
@@ -98,10 +103,11 @@ export default function Home() {
   // bypassing its own Cancel button entirely. Without this check, clicking
   // a different node (or "+ New node") while mid-edit silently discards
   // whatever wasn't saved yet.
-  function requestEditorTarget(next: string | null | undefined) {
+  function requestEditorTarget(next: string | null | undefined, parentId?: string) {
     if (editorRef.current?.isDirty() && !window.confirm("Discard unsaved changes?")) {
       return;
     }
+    setNewParentId(next === null ? parentId : undefined);
     if (next !== undefined && window.innerWidth < NARROW_VIEWPORT) setExportOpen(false);
     setEditorTarget(next);
   }
@@ -175,8 +181,14 @@ export default function Home() {
         <div className="absolute right-0 top-0 z-20 h-full">
           <NodeEditor
             ref={editorRef}
-            key={editorTarget ?? "new"}
+            // The key has to include the preset parent: going from one
+            // "Add a sub-node" straight to another keeps editorTarget at
+            // null, and without this the panel would not remount and
+            // would keep the previous parent in its state.
+            key={editorTarget ?? `new:${newParentId ?? ""}`}
             nodeId={editorTarget}
+            initialParentId={newParentId}
+            onAddChild={(id) => requestEditorTarget(null, id)}
             onClose={() => setEditorTarget(undefined)}
           />
         </div>
